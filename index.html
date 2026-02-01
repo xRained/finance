@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <div class="row mb-4">
     <div class="col-md-4">
         <div class="card h-100 mb-3">
@@ -43,33 +44,138 @@
     </div>
 </div>
 
+<div class="row mb-4">
+    <div class="col-lg-8 mb-3">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title fw-bold mb-3">Balance History</h5>
+                <div style="height: 300px; position: relative;">
+                    <canvas id="balanceChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 mb-3">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title fw-bold mb-3">Expenses by Category</h5>
+                <div style="height: 300px; position: relative;">
+                    <canvas id="categoryChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="card">
-    <div class="card-body p-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="card-body p-3 p-md-4">
+        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
             <h5 class="mb-0 fw-bold">Recent Activity</h5>
             <a href="/add" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg me-1"></i>Add New</a>
         </div>
-        <table class="table table-hover align-middle">
-            <thead>
-                <tr>
-                    <th class="text-muted small text-uppercase">Date</th>
-                    <th class="text-muted small text-uppercase">Transaction</th>
-                    <th class="text-muted small text-uppercase text-end">Total Balance</th>
-                </tr>
-            </thead>
-            <tbody class="border-top-0">
-                {% for row in recent %}
-                <tr>
-                    <td class="text-muted">{{ row['Date'] }}</td>
-                    <td class="fw-medium">{{ row['Transaction'] }}</td>
-                    <td class="text-end fw-bold">₱{{ "{:,.2f}".format(row['Total']) }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle text-nowrap">
+                <thead>
+                    <tr>
+                        <th class="text-muted small text-uppercase">Date</th>
+                        <th class="text-muted small text-uppercase">Transaction</th>
+                        <th class="text-muted small text-uppercase text-end">Total Balance</th>
+                    </tr>
+                </thead>
+                <tbody class="border-top-0">
+                    {% for row in recent %}
+                    <tr>
+                        <td class="text-muted">{{ row['Date'] }}</td>
+                        <td class="fw-medium">{{ row['Transaction'] }}</td>
+                        <td class="text-end fw-bold">₱{{ "{:,.2f}".format(row['Total']) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
         <div class="text-center mt-3">
             <a href="/ledger" class="text-decoration-none fw-medium">View Full Ledger <i class="bi bi-arrow-right ms-1"></i></a>
         </div>
     </div>
 </div>
+
+<script>
+    const ctx = document.getElementById('balanceChart').getContext('2d');
+    
+    // Create Gradient for EJ
+    let gradientEj = ctx.createLinearGradient(0, 0, 0, 400);
+    gradientEj.addColorStop(0, 'rgba(79, 70, 229, 0.5)');
+    gradientEj.addColorStop(1, 'rgba(79, 70, 229, 0.0)');
+
+    // Create Gradient for Shared
+    let gradientShared = ctx.createLinearGradient(0, 0, 0, 400);
+    gradientShared.addColorStop(0, 'rgba(25, 135, 84, 0.5)');
+    gradientShared.addColorStop(1, 'rgba(25, 135, 84, 0.0)');
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: {{ chart_labels|safe }},
+            datasets: [{
+                label: 'EJ Personal',
+                data: {{ chart_ej|safe }},
+                borderColor: '#4f46e5', // Primary Color
+                backgroundColor: gradientEj,
+                tension: 0.3,
+                fill: true
+            }, {
+                label: 'EJ & Neng',
+                data: {{ chart_shared|safe }},
+                borderColor: '#198754', // Success Color
+                backgroundColor: gradientShared,
+                tension: 0.3,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { 
+                legend: { 
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true
+                    }
+                } 
+            },
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            scales: {
+                x: { grid: { display: false } },
+                y: { grid: { borderDash: [5, 5] } }
+            }
+        }
+    });
+
+    // Category Pie Chart
+    const ctxCat = document.getElementById('categoryChart').getContext('2d');
+    new Chart(ctxCat, {
+        type: 'doughnut',
+        data: {
+            labels: {{ cat_labels|safe }},
+            datasets: [{
+                data: {{ cat_data|safe }},
+                backgroundColor: [
+                    '#4f46e5', '#198754', '#dc3545', '#ffc107', 
+                    '#0dcaf0', '#6610f2', '#fd7e14', '#20c997'
+                ],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { 
+                legend: { position: 'bottom' } 
+            }
+        }
+    });
+</script>
 {% endblock %}

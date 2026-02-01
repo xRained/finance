@@ -2,13 +2,22 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-body p-4">
-        <h4 class="card-title mb-4 fw-bold">Full Ledger History</h4>
+    <div class="card-body p-3 p-md-4">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="alert alert-success py-2">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+            <h4 class="card-title mb-0 fw-bold">Full Ledger History</h4>
+            <a href="/export" class="btn btn-success btn-sm"><i class="bi bi-download me-2"></i>Export CSV</a>
+        </div>
         <div class="table-responsive">
-            <table class="table table-hover align-middle">
+            <table class="table table-hover align-middle text-nowrap">
                 <thead class="bg-light">
                     <tr>
                         <th class="text-muted small text-uppercase">Date</th>
+                        <th class="text-muted small text-uppercase">Category</th>
                         <th class="text-muted small text-uppercase">Transaction</th>
                         <th class="text-muted small text-uppercase text-end">EJ Bal</th>
                         <th class="text-muted small text-uppercase text-end">EJ & Neng Bal</th>
@@ -17,12 +26,14 @@
                         <th class="text-muted small text-uppercase text-end text-success">In (EJ & Neng)</th>
                         <th class="text-muted small text-uppercase text-end text-danger">Out (EJ & Neng)</th>
                         <th class="text-muted small text-uppercase text-end">Total</th>
+                        <th class="text-muted small text-uppercase text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="border-top-0">
                     {% for row in transactions %}
                     <tr>
                         <td class="text-muted">{{ row['Date'] }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ row.get('Category', 'Other') }}</span></td>
                         <td class="fw-medium">{{ row['Transaction'] }}</td>
                         <td class="text-end">₱{{ "{:,.2f}".format(row['EJ Balance']) }}</td>
                         <td class="text-end">₱{{ "{:,.2f}".format(row['EJ & Neng Balance']) }}</td>
@@ -31,6 +42,10 @@
                         <td class="text-end text-success">{{ "₱{:,.2f}".format(row['Incoming (EJ & Neng)']) if row['Incoming (EJ & Neng)'] != 0 else '-' }}</td>
                         <td class="text-end text-danger">{{ "₱{:,.2f}".format(row['Outgoing (EJ & Neng)']) if row['Outgoing (EJ & Neng)'] != 0 else '-' }}</td>
                         <td class="text-end fw-bold">₱{{ "{:,.2f}".format(row['Total']) }}</td>
+                        <td class="text-end">
+                            <a href="/edit/{{ row['ID'] }}" class="btn btn-sm btn-outline-primary border-0"><i class="bi bi-pencil-square"></i></a>
+                            <a href="/delete/{{ row['ID'] }}" class="btn btn-sm btn-outline-danger border-0" onclick="return confirm('Are you sure? This will recalculate all subsequent balances.')"><i class="bi bi-trash"></i></a>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>

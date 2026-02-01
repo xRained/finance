@@ -58,6 +58,57 @@
             font-weight: 600;
             letter-spacing: -0.025em;
         }
+        /* Floating Chat Widget */
+        .chat-widget {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1050;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+        .chat-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background-color: var(--primary-color);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .chat-button:hover {
+            transform: scale(1.05);
+        }
+        .chat-window {
+            width: 350px;
+            height: 450px;
+            background: white;
+            border-radius: 1rem;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.15);
+            display: none;
+            flex-direction: column;
+            margin-bottom: 15px;
+            overflow: hidden;
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        .chat-window.active {
+            display: flex;
+        }
+        @media (max-width: 576px) {
+            .chat-window {
+                width: 90vw;
+                height: 60vh;
+                position: fixed;
+                bottom: 90px;
+                right: 5vw;
+            }
+        }
     </style>
 </head>
 <body>
@@ -91,5 +142,124 @@
         {% block content %}{% endblock %}
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    {% if session.get('logged_in') %}
+    <!-- Floating Chat Widget Structure -->
+    <div class="chat-widget">
+        <div class="chat-window" id="chat-window">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center p-3">
+                <h6 class="mb-0 fw-bold"><i class="bi bi-chat-quote-fill me-2"></i>Hinanaings</h6>
+                <button type="button" class="btn-close btn-close-white small" onclick="toggleChat()"></button>
+            </div>
+            
+            <div class="card-body p-0 d-flex flex-column" style="height: 100%; overflow: hidden;">
+                {% if session.get('chat_nickname') %}
+                    <!-- Chat Interface -->
+                    <div class="bg-light border-bottom p-2 text-center small text-muted">
+                        Logged in as: <strong>{{ session.get('chat_nickname') }}</strong>
+                        <a href="/chat/leave" class="text-danger ms-2 text-decoration-none fw-bold" style="font-size: 0.8em;">LEAVE</a>
+                    </div>
+                    <div id="chat-messages" class="flex-grow-1 overflow-auto p-3 bg-light">
+                        <div class="text-center text-muted mt-4 small">Loading messages...</div>
+                    </div>
+                    <div class="p-2 border-top bg-white">
+                        <form id="widget-chat-form" class="d-flex gap-2">
+                            <input type="text" id="widget-chat-input" class="form-control form-control-sm" placeholder="Type a message..." autocomplete="off" required>
+                            <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-send-fill"></i></button>
+                        </form>
+                    </div>
+                {% else %}
+                    <!-- Join Interface -->
+                    <div class="d-flex flex-column justify-content-center align-items-center h-100 p-4 text-center">
+                        <div class="bg-primary bg-opacity-10 p-3 rounded-circle mb-3">
+                            <i class="bi bi-chat-dots text-primary fs-1"></i>
+                        </div>
+                        <h6 class="mb-3 fw-bold">Join the Conversation</h6>
+                        <form id="widget-join-form" class="w-100">
+                            <div class="mb-3">
+                                <input type="text" id="widget-nickname-input" class="form-control" placeholder="Enter a Nickname" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Start Chatting</button>
+                        </form>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="chat-button" onclick="toggleChat()">
+            <i class="bi bi-chat-fill"></i>
+        </div>
+    </div>
+
+    <script>
+        const chatWindow = document.getElementById('chat-window');
+        const messagesContainer = document.getElementById('chat-messages');
+        const currentUser = "{{ session.get('chat_nickname', '') }}";
+        let chatInterval;
+
+        function toggleChat() {
+            chatWindow.classList.toggle('active');
+            if (chatWindow.classList.contains('active') && currentUser) {
+                scrollToBottom();
+                fetchMessages(); // Fetch immediately
+            }
+        }
+
+        function scrollToBottom() {
+            if(messagesContainer) messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Join Logic
+        const joinForm = document.getElementById('widget-join-form');
+        if (joinForm) {
+            joinForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const nickname = document.getElementById('widget-nickname-input').value;
+                const res = await fetch('/chat/join', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({nickname: nickname})
+                });
+                if (res.ok) location.reload(); // Reload to show chat interface
+            });
+        }
+
+        // Chat Logic
+        const chatForm = document.getElementById('widget-chat-form');
+        if (chatForm) {
+            chatForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const input = document.getElementById('widget-chat-input');
+                const msg = input.value.trim();
+                if (!msg) return;
+                input.value = '';
+                await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message: msg})
+                });
+                fetchMessages();
+            });
+
+            async function fetchMessages() {
+                if (!chatWindow.classList.contains('active')) return;
+                try {
+                    const res = await fetch('/api/chat');
+                    const data = await res.json();
+                    if (data.messages) {
+                        messagesContainer.innerHTML = data.messages.map(msg => {
+                            const isMe = msg.nickname === currentUser;
+                            const align = isMe ? 'end' : 'start';
+                            const bg = isMe ? 'bg-primary text-white' : 'bg-light border text-dark';
+                            return `<div class="d-flex flex-column align-items-${align} mb-2"><div class="small text-muted" style="font-size:0.7em">${isMe ? 'You' : msg.nickname}</div><div class="${bg} px-3 py-2 rounded-3 shadow-sm" style="max-width:85%; font-size:0.9em; word-wrap:break-word;">${msg.message}</div></div>`;
+                        }).join('');
+                        scrollToBottom();
+                    }
+                } catch(e) {}
+            }
+            setInterval(fetchMessages, 3000);
+        }
+    </script>
+    {% endif %}
 </body>
 </html>

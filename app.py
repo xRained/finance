@@ -1,8 +1,9 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from finance_tracker import SupabaseStorage
 from datetime import datetime
 from functools import wraps
 import os
+import json
 
 # Set template_folder to '.' to find HTML files in the current directory
 app = Flask(__name__, template_folder='.')
@@ -31,12 +32,37 @@ def index():
     
     # Get recent transactions for display (top 5)
     df = storage.get_all_transactions()
+    
+    # Prepare Chart Data
+    chart_labels = []
+    chart_ej = []
+    chart_shared = []
+    
+    # Prepare Category Data for Pie Chart
+    category_data = {}
+    
+    if not df.empty:
+        chart_labels = df['Date'].tolist()
+        chart_ej = df['EJ Balance'].tolist()
+        chart_shared = df['EJ & Neng Balance'].tolist()
+        
+        # Aggregate expenses by category
+        for index, row in df.iterrows():
+            cat = row.get('Category', 'Other')
+            expense = (row['Outgoing EJ'] or 0) + (row['Outgoing (EJ & Neng)'] or 0)
+            if expense > 0:
+                category_data[cat] = category_data.get(cat, 0) + expense
+
     recent = []
     if not df.empty:
         recent = df.tail(5).to_dict('records')
         recent = recent[::-1] # Reverse to show newest first
 
-    return render_template('index.html', ej_bal=ej_bal, shared_bal=shared_bal, total=total, recent=recent)
+    return render_template('index.html', ej_bal=ej_bal, shared_bal=shared_bal, total=total, recent=recent,
+                           chart_labels=json.dumps(chart_labels), chart_ej=json.dumps(chart_ej), 
+                           chart_shared=json.dumps(chart_shared),
+                           cat_labels=json.dumps(list(category_data.keys())),
+                           cat_data=json.dumps(list(category_data.values())))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -68,6 +94,7 @@ def initialize():
         initial_data = {
             'Date': datetime.now().strftime('%Y-%m-%d'),
             'Transaction': 'Initial Balance',
+            'Category': 'Initial',
             'EJ Balance': round(ej_start, 2),
             'EJ & Neng Balance': round(shared_start, 2),
             'Incoming EJ': 0.0,
@@ -93,6 +120,7 @@ def add_transaction():
             date_input = datetime.now().strftime('%Y-%m-%d')
         
         description = request.form.get('description', 'No Description')
+        category = request.form.get('category', 'Other')
         
         try:
             inc_ej = float(request.form.get('inc_ej', 0) or 0)
@@ -111,6 +139,7 @@ def add_transaction():
         new_entry = {
             'Date': date_input,
             'Transaction': description,
+            'Category': category,
             'EJ Balance': round(new_ej, 2),
             'EJ & Neng Balance': round(new_shared, 2),
             'Incoming EJ': inc_ej,
@@ -125,6 +154,40 @@ def add_transaction():
 
     return render_template('add.html', today=datetime.now().strftime('%Y-%m-%d'))
 
+@app.route('/edit/<int:id>', methods=['GET', 'POST'])
+@login_required
+def edit_transaction(id):
+    entry = storage.get_entry(id)
+    if not entry:
+        return redirect(url_for('view_ledger'))
+
+    if request.method == 'POST':
+        try:
+            update_data = {
+                'Date': request.form.get('date'),
+                'Transaction': request.form.get('description'),
+                'Category': request.form.get('category'),
+                'Incoming EJ': float(request.form.get('inc_ej', 0) or 0),
+                'Outgoing EJ': float(request.form.get('out_ej', 0) or 0),
+                'Incoming (EJ & Neng)': float(request.form.get('inc_shared', 0) or 0),
+                'Outgoing (EJ & Neng)': float(request.form.get('out_shared', 0) or 0)
+            }
+            # We don't calculate balances here; storage.update_entry handles recalculation
+            storage.update_entry(id, update_data)
+            flash('Transaction updated successfully!')
+            return redirect(url_for('view_ledger'))
+        except ValueError:
+            flash('Invalid input')
+
+    return render_template('edit.html', entry=entry)
+
+@app.route('/delete/<int:id>')
+@login_required
+def delete_transaction(id):
+    storage.delete_entry(id)
+    flash('Transaction deleted.')
+    return redirect(url_for('view_ledger'))
+
 @app.route('/ledger')
 @login_required
 def view_ledger():
@@ -134,6 +197,67 @@ def view_ledger():
     df = storage.get_all_transactions()
     transactions = df.to_dict('records') if not df.empty else []
     return render_template('ledger.html', transactions=transactions[::-1])
+
+@app.route('/chat')
+@login_required
+def chat():
+    if 'chat_nickname' not in session:
+        return redirect(url_for('chat_join'))
+    return render_template('chat.html', nickname=session['chat_nickname'])
+
+@app.route('/chat/join', methods=['GET', 'POST'])
+@login_required
+def chat_join():
+    if request.method == 'POST':
+        # Handle AJAX request from floating widget
+        if request.is_json:
+            data = request.get_json()
+            nickname = data.get('nickname')
+            if nickname:
+                session['chat_nickname'] = nickname
+                return jsonify({'status': 'success'})
+            return jsonify({'error': 'Nickname required'}), 400
+            
+        nickname = request.form.get('nickname')
+        if nickname:
+            session['chat_nickname'] = nickname
+            return redirect(url_for('chat'))
+    return render_template('chat_join.html')
+
+@app.route('/chat/leave')
+@login_required
+def chat_leave():
+    session.pop('chat_nickname', None)
+    return redirect(request.referrer or url_for('index'))
+
+@app.route('/api/chat', methods=['GET', 'POST'])
+@login_required
+def chat_api():
+    if 'chat_nickname' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    if request.method == 'POST':
+        data = request.get_json()
+        msg = data.get('message')
+        if msg:
+            storage.add_chat_message(session['chat_nickname'], msg)
+        return jsonify({"status": "success"})
+    
+    messages = storage.get_chat_messages()
+    return jsonify({"messages": messages})
+
+@app.route('/export')
+@login_required
+def export_data():
+    if not storage.exists():
+        return redirect(url_for('initialize'))
+        
+    df = storage.get_all_transactions()
+    return Response(
+        df.to_csv(index=False, encoding='utf-8-sig'),
+        mimetype="text/csv",
+        headers={"Content-disposition": f"attachment; filename=finance_ledger_{datetime.now().strftime('%Y-%m-%d')}.csv"}
+    )
 
 if __name__ == '__main__':
     app.run(debug=True)

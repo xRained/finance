@@ -79,7 +79,9 @@ class SupabaseStorage:
         
         # Map App names (Title Case) to DB names (snake_case)
         self.col_map = {
+            'ID': 'id',
             'Date': 'date',
+            'Category': 'category',
             'Transaction': 'description',
             'EJ Balance': 'ej_balance',
             'EJ & Neng Balance': 'ej_neng_balance',
@@ -118,6 +120,51 @@ class SupabaseStorage:
     def add_entry(self, entry_data):
         db_data = {self.col_map.get(k, k): v for k, v in entry_data.items()}
         self.supabase.table(self.table).insert(db_data).execute()
+        self.recalculate_balances()
+
+    def get_entry(self, entry_id):
+        res = self.supabase.table(self.table).select("*").eq("id", entry_id).execute()
+        if res.data:
+            # Convert back to App keys
+            return {self.rev_map.get(k, k): v for k, v in res.data[0].items()}
+        return None
+
+    def update_entry(self, entry_id, data):
+        # Convert to DB keys
+        db_data = {self.col_map.get(k, k): v for k, v in data.items() if k in self.col_map}
+        self.supabase.table(self.table).update(db_data).eq("id", entry_id).execute()
+        self.recalculate_balances()
+
+    def delete_entry(self, entry_id):
+        self.supabase.table(self.table).delete().eq("id", entry_id).execute()
+        self.recalculate_balances()
+
+    def recalculate_balances(self):
+        """Recalculates running balances for all transactions to ensure consistency."""
+        # Fetch all rows ordered by date and ID
+        res = self.supabase.table(self.table).select("*").order("date", desc=False).order("id", desc=False).execute()
+        rows = res.data
+        
+        ej_bal = 0.0
+        shared_bal = 0.0
+        updates = []
+
+        for row in rows:
+            # Calculate new running totals
+            ej_bal += (row.get('incoming_ej') or 0) - (row.get('outgoing_ej') or 0)
+            shared_bal += (row.get('incoming_ej_neng') or 0) - (row.get('outgoing_ej_neng') or 0)
+            total = ej_bal + shared_bal
+            
+            # Only update if numbers changed (using small epsilon for float comparison)
+            if abs((row.get('ej_balance') or 0) - ej_bal) > 0.01 or \
+               abs((row.get('ej_neng_balance') or 0) - shared_bal) > 0.01:
+                row['ej_balance'] = ej_bal
+                row['ej_neng_balance'] = shared_bal
+                row['total'] = total
+                updates.append(row)
+        
+        if updates:
+            self.supabase.table(self.table).upsert(updates).execute()
 
     def get_all_transactions(self):
         res = self.supabase.table(self.table).select("*").order("id", desc=False).execute()
@@ -126,6 +173,23 @@ class SupabaseStorage:
             converted = [{self.rev_map.get(k, k): v for k, v in row.items()} for row in res.data]
             return pd.DataFrame(converted)
         return pd.DataFrame(columns=self.col_map.keys())
+
+    def get_chat_messages(self):
+        if not self.supabase: return []
+        try:
+            # Fetch last 50 messages, oldest first
+            res = self.supabase.table("chat_messages").select("*").order("created_at", desc=False).limit(50).execute()
+            return res.data if res.data else []
+        except Exception as e:
+            print(f"Chat error: {e}")
+            return []
+
+    def add_chat_message(self, nickname, message):
+        if not self.supabase: return
+        try:
+            self.supabase.table("chat_messages").insert({"nickname": nickname, "message": message}).execute()
+        except Exception as e:
+            print(f"Chat add error: {e}")
 
 class FinanceTracker:
     def __init__(self):
