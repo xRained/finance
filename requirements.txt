@@ -1,2 +1,6 @@
 pandas
 tabulate
+Flask
+streamlit
+supabase
+python-dotenv

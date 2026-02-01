@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card h-100 mb-3">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-2">
+                    <div class="bg-primary bg-opacity-10 p-2 rounded-3 me-3">
+                        <i class="bi bi-person text-primary fs-4"></i>
+                    </div>
+                    <h6 class="text-muted text-uppercase mb-0">EJ Personal</h6>
+                </div>
+                <h2 class="card-title mb-0">₱{{ "{:,.2f}".format(ej_bal) }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100 mb-3">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-2">
+                    <div class="bg-success bg-opacity-10 p-2 rounded-3 me-3">
+                        <i class="bi bi-piggy-bank text-success fs-4"></i>
+                    </div>
+                    <h6 class="text-muted text-uppercase mb-0">EJ & Neng</h6>
+                </div>
+                <h2 class="card-title mb-0">₱{{ "{:,.2f}".format(shared_bal) }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100 mb-3 bg-dark text-white">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-2">
+                    <div class="bg-white bg-opacity-25 p-2 rounded-3 me-3">
+                        <i class="bi bi-wallet2 text-white fs-4"></i>
+                    </div>
+                    <h6 class="text-white-50 text-uppercase mb-0">Total Assets</h6>
+                </div>
+                <h2 class="card-title mb-0">₱{{ "{:,.2f}".format(total) }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h5 class="mb-0 fw-bold">Recent Activity</h5>
+            <a href="/add" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg me-1"></i>Add New</a>
+        </div>
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th class="text-muted small text-uppercase">Date</th>
+                    <th class="text-muted small text-uppercase">Transaction</th>
+                    <th class="text-muted small text-uppercase text-end">Total Balance</th>
+                </tr>
+            </thead>
+            <tbody class="border-top-0">
+                {% for row in recent %}
+                <tr>
+                    <td class="text-muted">{{ row['Date'] }}</td>
+                    <td class="fw-medium">{{ row['Transaction'] }}</td>
+                    <td class="text-end fw-bold">₱{{ "{:,.2f}".format(row['Total']) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="text-center mt-3">
+            <a href="/ledger" class="text-decoration-none fw-medium">View Full Ledger <i class="bi bi-arrow-right ms-1"></i></a>
+        </div>
+    </div>
+</div>
+{% endblock %}

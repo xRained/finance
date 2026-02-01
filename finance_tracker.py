@@ -2,6 +2,10 @@ import pandas as pd
 from tabulate import tabulate
 import os
 from datetime import datetime
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class CSVStorage:
     """Handles data persistence using a CSV file."""
@@ -9,11 +13,28 @@ class CSVStorage:
         self.filename = filename
         self.columns = [
             'Date', 'Transaction', 
-            'EJ Balance', 'Shared Balance', 
+            'EJ Balance', 'EJ & Neng Balance', 
             'Incoming EJ', 'Outgoing EJ', 
-            'Incoming Shared', 'Outgoing Shared', 
+            'Incoming (EJ & Neng)', 'Outgoing (EJ & Neng)', 
             'Total'
         ]
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Updates old column names to new ones if they exist."""
+        if self.exists():
+            try:
+                df = pd.read_csv(self.filename)
+                rename_map = {
+                    'Shared Balance': 'EJ & Neng Balance',
+                    'Incoming Shared': 'Incoming (EJ & Neng)',
+                    'Outgoing Shared': 'Outgoing (EJ & Neng)'
+                }
+                if any(old in df.columns for old in rename_map):
+                    df.rename(columns=rename_map, inplace=True)
+                    df.to_csv(self.filename, index=False)
+            except Exception as e:
+                print(f"Migration warning: {e}")
 
     def exists(self):
         return os.path.exists(self.filename)
@@ -29,7 +50,7 @@ class CSVStorage:
             df = pd.read_csv(self.filename)
             if not df.empty:
                 last_row = df.iloc[-1]
-                return last_row['EJ Balance'], last_row['Shared Balance']
+                return last_row['EJ Balance'], last_row['EJ & Neng Balance']
         except Exception as e:
             print(f"Error reading ledger: {e}")
         return 0.0, 0.0
@@ -44,10 +65,72 @@ class CSVStorage:
             return pd.read_csv(self.filename)
         return pd.DataFrame(columns=self.columns)
 
+class SupabaseStorage:
+    """Handles data persistence using Supabase."""
+    def __init__(self):
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
+        if not url or not key:
+            # Fallback or error if credentials are missing
+            print("Warning: SUPABASE_URL or SUPABASE_KEY not found in environment.")
+        
+        self.supabase: Client = create_client(url, key) if url and key else None
+        self.table = "finance_ledger"
+        
+        # Map App names (Title Case) to DB names (snake_case)
+        self.col_map = {
+            'Date': 'date',
+            'Transaction': 'description',
+            'EJ Balance': 'ej_balance',
+            'EJ & Neng Balance': 'ej_neng_balance',
+            'Incoming EJ': 'incoming_ej',
+            'Outgoing EJ': 'outgoing_ej',
+            'Incoming (EJ & Neng)': 'incoming_ej_neng',
+            'Outgoing (EJ & Neng)': 'outgoing_ej_neng',
+            'Total': 'total'
+        }
+        # Reverse map for reading back
+        self.rev_map = {v: k for k, v in self.col_map.items()}
+
+    def exists(self):
+        if not self.supabase: return False
+        try:
+            # Check if we can fetch at least one row or if table exists
+            res = self.supabase.table(self.table).select("id", count="exact").limit(1).execute()
+            return res.count > 0
+        except Exception:
+            return False
+
+    def initialize(self, initial_data):
+        # Convert Title Case data to snake_case for DB
+        db_data = {self.col_map.get(k, k): v for k, v in initial_data.items()}
+        self.supabase.table(self.table).insert(db_data).execute()
+        print("Ledger initialized in Supabase.")
+
+    def get_last_balances(self):
+        # Get the most recent entry
+        res = self.supabase.table(self.table).select("*").order("id", desc=True).limit(1).execute()
+        if res.data:
+            row = res.data[0]
+            return row['ej_balance'], row['ej_neng_balance']
+        return 0.0, 0.0
+
+    def add_entry(self, entry_data):
+        db_data = {self.col_map.get(k, k): v for k, v in entry_data.items()}
+        self.supabase.table(self.table).insert(db_data).execute()
+
+    def get_all_transactions(self):
+        res = self.supabase.table(self.table).select("*").order("id", desc=False).execute()
+        if res.data:
+            # Convert DB snake_case back to App Title Case
+            converted = [{self.rev_map.get(k, k): v for k, v in row.items()} for row in res.data]
+            return pd.DataFrame(converted)
+        return pd.DataFrame(columns=self.col_map.keys())
+
 class FinanceTracker:
     def __init__(self):
-        # To use Supabase later, you would swap CSVStorage() with SupabaseStorage() here
-        self.storage = CSVStorage()
+        # Switched to SupabaseStorage as requested
+        self.storage = SupabaseStorage()
         self.check_file()
 
     def check_file(self):
@@ -61,7 +144,7 @@ class FinanceTracker:
         print("\n--- Initial Setup ---")
         try:
             ej_start = float(input("Enter starting balance for EJ Personal: "))
-            shared_start = float(input("Enter starting balance for Shared Future: "))
+            shared_start = float(input("Enter starting balance for EJ & Neng: "))
         except ValueError:
             print("Invalid input. Defaulting balances to 0.0.")
             ej_start = 0.0
@@ -74,11 +157,11 @@ class FinanceTracker:
             'Date': datetime.now().strftime('%Y-%m-%d'),
             'Transaction': 'Initial Balance',
             'EJ Balance': round(ej_start, 2),
-            'Shared Balance': round(shared_start, 2),
+            'EJ & Neng Balance': round(shared_start, 2),
             'Incoming EJ': 0.0,
             'Outgoing EJ': 0.0,
-            'Incoming Shared': 0.0,
-            'Outgoing Shared': 0.0,
+            'Incoming (EJ & Neng)': 0.0,
+            'Outgoing (EJ & Neng)': 0.0,
             'Total': round(total, 2)
         }
         
@@ -110,8 +193,8 @@ class FinanceTracker:
         # Amount Inputs
         inc_ej = get_amount("Incoming (EJ): ")
         out_ej = get_amount("Outgoing (EJ): ")
-        inc_shared = get_amount("Incoming (Shared): ")
-        out_shared = get_amount("Outgoing (Shared): ")
+        inc_shared = get_amount("Incoming (EJ & Neng): ")
+        out_shared = get_amount("Outgoing (EJ & Neng): ")
 
         prev_ej, prev_shared = self.storage.get_last_balances()
 
@@ -130,11 +213,11 @@ class FinanceTracker:
             'Date': date_input,
             'Transaction': description,
             'EJ Balance': round(new_ej, 2),
-            'Shared Balance': round(new_shared, 2),
+            'EJ & Neng Balance': round(new_shared, 2),
             'Incoming EJ': inc_ej,
             'Outgoing EJ': out_ej,
-            'Incoming Shared': inc_shared,
-            'Outgoing Shared': out_shared,
+            'Incoming (EJ & Neng)': inc_shared,
+            'Outgoing (EJ & Neng)': out_shared,
             'Total': round(total, 2)
         }
 

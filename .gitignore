@@ -4,3 +4,6 @@ finance_ledger.csv
 # Ignore python cache files
 __pycache__/
 *.pyc
+
+# Environment variables (Keep this secret!)
+.env

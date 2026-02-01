@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body p-4">
+        <h4 class="card-title mb-4 fw-bold">Full Ledger History</h4>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="text-muted small text-uppercase">Date</th>
+                        <th class="text-muted small text-uppercase">Transaction</th>
+                        <th class="text-muted small text-uppercase text-end">EJ Bal</th>
+                        <th class="text-muted small text-uppercase text-end">EJ & Neng Bal</th>
+                        <th class="text-muted small text-uppercase text-end text-success">In (EJ)</th>
+                        <th class="text-muted small text-uppercase text-end text-danger">Out (EJ)</th>
+                        <th class="text-muted small text-uppercase text-end text-success">In (EJ & Neng)</th>
+                        <th class="text-muted small text-uppercase text-end text-danger">Out (EJ & Neng)</th>
+                        <th class="text-muted small text-uppercase text-end">Total</th>
+                    </tr>
+                </thead>
+                <tbody class="border-top-0">
+                    {% for row in transactions %}
+                    <tr>
+                        <td class="text-muted">{{ row['Date'] }}</td>
+                        <td class="fw-medium">{{ row['Transaction'] }}</td>
+                        <td class="text-end">₱{{ "{:,.2f}".format(row['EJ Balance']) }}</td>
+                        <td class="text-end">₱{{ "{:,.2f}".format(row['EJ & Neng Balance']) }}</td>
+                        <td class="text-end text-success">{{ "₱{:,.2f}".format(row['Incoming EJ']) if row['Incoming EJ'] != 0 else '-' }}</td>
+                        <td class="text-end text-danger">{{ "₱{:,.2f}".format(row['Outgoing EJ']) if row['Outgoing EJ'] != 0 else '-' }}</td>
+                        <td class="text-end text-success">{{ "₱{:,.2f}".format(row['Incoming (EJ & Neng)']) if row['Incoming (EJ & Neng)'] != 0 else '-' }}</td>
+                        <td class="text-end text-danger">{{ "₱{:,.2f}".format(row['Outgoing (EJ & Neng)']) if row['Outgoing (EJ & Neng)'] != 0 else '-' }}</td>
+                        <td class="text-end fw-bold">₱{{ "{:,.2f}".format(row['Total']) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
