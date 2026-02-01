@@ -6,7 +6,7 @@ import os
 
 # Set template_folder to '.' to find HTML files in the current directory
 app = Flask(__name__, template_folder='.')
-app.secret_key = os.urandom(24) # Required for session management
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24)) # Required for session management
 
 # Security Configuration
 ADMIN_PASSWORD = "082628"
