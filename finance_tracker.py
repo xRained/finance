@@ -12,7 +12,7 @@ class CSVStorage:
     def __init__(self, filename='finance_ledger.csv'):
         self.filename = filename
         self.columns = [
-            'Date', 'Transaction', 
+            'Date', 'Time', 'Transaction', 
             'EJ Balance', 'EJ & Neng Balance', 
             'Incoming EJ', 'Outgoing EJ', 
             'Incoming (EJ & Neng)', 'Outgoing (EJ & Neng)', 
@@ -81,6 +81,7 @@ class SupabaseStorage:
         self.col_map = {
             'ID': 'id',
             'Date': 'date',
+            'Time': 'time',
             'Category': 'category',
             'Transaction': 'description',
             'EJ Balance': 'ej_balance',
@@ -187,7 +188,11 @@ class SupabaseStorage:
     def add_chat_message(self, nickname, message):
         if not self.supabase: return
         try:
-            self.supabase.table("chat_messages").insert({"nickname": nickname, "message": message}).execute()
+            self.supabase.table("chat_messages").insert({
+                "nickname": nickname, 
+                "message": message,
+                "created_at": datetime.now().isoformat()
+            }).execute()
         except Exception as e:
             print(f"Chat add error: {e}")
 

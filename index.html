@@ -78,7 +78,9 @@
                 <thead>
                     <tr>
                         <th class="text-muted small text-uppercase">Date</th>
+                        <th class="text-muted small text-uppercase">Time</th>
                         <th class="text-muted small text-uppercase">Transaction</th>
+                        <th class="text-muted small text-uppercase text-end">Amount</th>
                         <th class="text-muted small text-uppercase text-end">Total Balance</th>
                     </tr>
                 </thead>
@@ -86,7 +88,9 @@
                     {% for row in recent %}
                     <tr>
                         <td class="text-muted">{{ row['Date'] }}</td>
+                        <td class="text-muted small">{{ row.get('Time', '-') }}</td>
                         <td class="fw-medium">{{ row['Transaction'] }}</td>
+                        <td class="text-end">{{ row['Amount'] }}</td>
                         <td class="text-end fw-bold">₱{{ "{:,.2f}".format(row['Total']) }}</td>
                     </tr>
                     {% endfor %}

@@ -1,9 +1,10 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from finance_tracker import SupabaseStorage
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 import os
 import json
+import pandas as pd
 
 # Set template_folder to '.' to find HTML files in the current directory
 app = Flask(__name__, template_folder='.')
@@ -11,6 +12,7 @@ app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24)) # Required for ses
 
 # Security Configuration
 ADMIN_PASSWORD = "082628"
+
 storage = SupabaseStorage()
 
 def login_required(f):
@@ -21,11 +23,99 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def check_maribank_interest():
+    if not storage.exists():
+        return
+
+    df = storage.get_all_transactions()
+    if df.empty:
+        return
+
+    # Ensure data is sorted by date for accurate balance history
+    df['DateObj'] = pd.to_datetime(df['Date'], errors='coerce')
+    df = df.dropna(subset=['DateObj'])
+    
+    if 'ID' in df.columns:
+        df = df.sort_values(by=['DateObj', 'ID'])
+    else:
+        df = df.sort_values(by='DateObj')
+
+    # Filter for Maribank Interest transactions
+    interest_df = df[df['Transaction'].str.strip() == 'Maribank Interest']
+    
+    today = datetime.now().date()
+    
+    if not interest_df.empty:
+        last_interest_date = interest_df['DateObj'].max().date()
+    else:
+        # Start from yesterday if no history
+        last_interest_date = today - timedelta(days=1)
+
+    next_date = last_interest_date + timedelta(days=1)
+    session_interest = 0.0
+    
+    while next_date <= today:
+        next_date_str = next_date.strftime('%Y-%m-%d')
+        
+        # Check for duplicates
+        if not df[(df['Date'] == next_date_str) & (df['Transaction'].str.strip() == 'Maribank Interest')].empty:
+            next_date += timedelta(days=1)
+            continue
+            
+        # Balance from previous day
+        balance_date = next_date - timedelta(days=1)
+        mask = df['DateObj'].dt.date <= balance_date
+        past_df = df.loc[mask]
+        
+        if not past_df.empty:
+            last_row = past_df.iloc[-1]
+            total_assets = float(last_row.get('Total', 0) or 0)
+            current_total_balance = total_assets + session_interest
+            
+            if current_total_balance > 0:
+                # 1. Determine Tiered Interest Rate
+                # 3.25% for first 1M, 3.75% for any amount over 1M
+                tier_limit = 1000000
+                if current_total_balance <= tier_limit:
+                    daily_gross = (current_total_balance * 0.0325) / 365
+                else:
+                    # Calculate interest for the first 1M at 3.25%
+                    tier1_interest = (tier_limit * 0.0325) / 365
+                    # Calculate interest for the excess at 3.75%
+                    excess_balance = current_total_balance - tier_limit
+                    tier2_interest = (excess_balance * 0.0375) / 365
+                    daily_gross = tier1_interest + tier2_interest
+                
+                # 2. Apply 20% Philippine Withholding Tax
+                tax_amount = daily_gross * 0.20
+                net_interest = round(daily_gross - tax_amount, 2)
+                
+                # 3. Log only if it meets the 1 centavo minimum credit threshold
+                if net_interest >= 0.01:
+                    new_entry = {
+                        'Date': next_date_str,
+                        'Transaction': 'Maribank Interest',
+                        'Category': 'Interest',
+                        'EJ Balance': 0, 
+                        'EJ & Neng Balance': 0, 
+                        'Incoming EJ': 0.0,
+                        'Outgoing EJ': 0.0,
+                        'Incoming (EJ & Neng)': net_interest,
+                        'Outgoing (EJ & Neng)': 0.0,
+                        'Total': 0 
+                    }
+                    storage.add_entry(new_entry)
+                    session_interest += net_interest
+        
+        next_date += timedelta(days=1)
+
 @app.route('/')
 @login_required
 def index():
     if not storage.exists():
         return redirect(url_for('initialize'))
+    
+    check_maribank_interest()
     
     ej_bal, shared_bal = storage.get_last_balances()
     total = ej_bal + shared_bal
@@ -57,6 +147,23 @@ def index():
     if not df.empty:
         recent = df.tail(5).to_dict('records')
         recent = recent[::-1] # Reverse to show newest first
+        
+        for tx in recent:
+            def get_val(key):
+                v = tx.get(key)
+                return float(v) if pd.notna(v) else 0.0
+
+            inc = get_val('Incoming EJ') + get_val('Incoming (EJ & Neng)')
+            out = get_val('Outgoing EJ') + get_val('Outgoing (EJ & Neng)')
+            
+            if inc > 0 and out > 0:
+                tx['Amount'] = f"+{inc:,.2f} | -{out:,.2f}"
+            elif inc > 0:
+                tx['Amount'] = f"+{inc:,.2f}"
+            elif out > 0:
+                tx['Amount'] = f"-{out:,.2f}"
+            else:
+                tx['Amount'] = "-"
 
     return render_template('index.html', ej_bal=ej_bal, shared_bal=shared_bal, total=total, recent=recent,
                            chart_labels=json.dumps(chart_labels), chart_ej=json.dumps(chart_ej), 
@@ -93,6 +200,7 @@ def initialize():
         total = ej_start + shared_start
         initial_data = {
             'Date': datetime.now().strftime('%Y-%m-%d'),
+            'Time': datetime.now().strftime('%H:%M:%S'),
             'Transaction': 'Initial Balance',
             'Category': 'Initial',
             'EJ Balance': round(ej_start, 2),
@@ -138,6 +246,7 @@ def add_transaction():
 
         new_entry = {
             'Date': date_input,
+            'Time': datetime.now().strftime('%H:%M:%S'),
             'Transaction': description,
             'Category': category,
             'EJ Balance': round(new_ej, 2),
