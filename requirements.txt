@@ -1,6 +1,6 @@
-pandas
-tabulate
 Flask
+pandas
 supabase
 python-dotenv
+tabulate
 gunicorn

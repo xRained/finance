@@ -24,90 +24,98 @@ def login_required(f):
     return decorated_function
 
 def check_maribank_interest():
-    if not storage.exists():
-        return
+    try:
+        if not storage.exists():
+            return
 
-    df = storage.get_all_transactions()
-    if df.empty:
-        return
+        df = storage.get_all_transactions()
+        if df.empty:
+            return
 
-    # Ensure data is sorted by date for accurate balance history
-    df['DateObj'] = pd.to_datetime(df['Date'], errors='coerce')
-    df = df.dropna(subset=['DateObj'])
-    
-    if 'ID' in df.columns:
-        df = df.sort_values(by=['DateObj', 'ID'])
-    else:
-        df = df.sort_values(by='DateObj')
-
-    # Filter for Maribank Interest transactions
-    interest_df = df[df['Transaction'].str.strip() == 'Maribank Interest']
-    
-    today = datetime.now().date()
-    
-    if not interest_df.empty:
-        last_interest_date = interest_df['DateObj'].max().date()
-    else:
-        # Start from yesterday if no history
-        last_interest_date = today - timedelta(days=1)
-
-    next_date = last_interest_date + timedelta(days=1)
-    session_interest = 0.0
-    
-    while next_date <= today:
-        next_date_str = next_date.strftime('%Y-%m-%d')
+        # Ensure data is sorted by date for accurate balance history
+        df['DateObj'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['DateObj'])
         
-        # Check for duplicates
-        if not df[(df['Date'] == next_date_str) & (df['Transaction'].str.strip() == 'Maribank Interest')].empty:
+        if 'ID' in df.columns:
+            df = df.sort_values(by=['DateObj', 'ID'])
+        else:
+            df = df.sort_values(by='DateObj')
+
+        # Filter for Maribank Interest transactions
+        interest_df = df[df['Transaction'].str.strip() == 'Maribank Interest']
+        
+        today = datetime.now().date()
+        
+        if not interest_df.empty:
+            last_interest_date = interest_df['DateObj'].max().date()
+        else:
+            # Start from yesterday if no history
+            last_interest_date = today - timedelta(days=1)
+
+        next_date = last_interest_date + timedelta(days=1)
+        session_interest = 0.0
+        entries_added = False
+        
+        while next_date <= today:
+            next_date_str = next_date.strftime('%Y-%m-%d')
+            
+            # Check for duplicates
+            if not df[(df['Date'] == next_date_str) & (df['Transaction'].str.strip() == 'Maribank Interest')].empty:
+                next_date += timedelta(days=1)
+                continue
+                
+            # Balance from previous day
+            balance_date = next_date - timedelta(days=1)
+            mask = df['DateObj'].dt.date <= balance_date
+            past_df = df.loc[mask]
+            
+            if not past_df.empty:
+                last_row = past_df.iloc[-1]
+                total_assets = float(last_row.get('Total', 0) or 0)
+                current_total_balance = total_assets + session_interest
+                
+                if current_total_balance > 0:
+                    # 1. Determine Tiered Interest Rate
+                    # 3.25% for first 1M, 3.75% for any amount over 1M
+                    tier_limit = 1000000
+                    if current_total_balance <= tier_limit:
+                        daily_gross = (current_total_balance * 0.0325) / 365
+                    else:
+                        # Calculate interest for the first 1M at 3.25%
+                        tier1_interest = (tier_limit * 0.0325) / 365
+                        # Calculate interest for the excess at 3.75%
+                        excess_balance = current_total_balance - tier_limit
+                        tier2_interest = (excess_balance * 0.0375) / 365
+                        daily_gross = tier1_interest + tier2_interest
+                    
+                    # 2. Apply 20% Philippine Withholding Tax
+                    tax_amount = daily_gross * 0.20
+                    net_interest = round(daily_gross - tax_amount, 2)
+                    
+                    # 3. Log only if it meets the 1 centavo minimum credit threshold
+                    if net_interest >= 0.01:
+                        new_entry = {
+                            'Date': next_date_str,
+                            'Transaction': 'Maribank Interest',
+                            'Category': 'Interest',
+                            'EJ Balance': 0, 
+                            'EJ & Neng Balance': 0, 
+                            'Incoming EJ': 0.0,
+                            'Outgoing EJ': 0.0,
+                            'Incoming (EJ & Neng)': net_interest,
+                            'Outgoing (EJ & Neng)': 0.0,
+                            'Total': 0 
+                        }
+                        storage.add_entry(new_entry, recalculate=False)
+                        session_interest += net_interest
+                        entries_added = True
+            
             next_date += timedelta(days=1)
-            continue
-            
-        # Balance from previous day
-        balance_date = next_date - timedelta(days=1)
-        mask = df['DateObj'].dt.date <= balance_date
-        past_df = df.loc[mask]
         
-        if not past_df.empty:
-            last_row = past_df.iloc[-1]
-            total_assets = float(last_row.get('Total', 0) or 0)
-            current_total_balance = total_assets + session_interest
-            
-            if current_total_balance > 0:
-                # 1. Determine Tiered Interest Rate
-                # 3.25% for first 1M, 3.75% for any amount over 1M
-                tier_limit = 1000000
-                if current_total_balance <= tier_limit:
-                    daily_gross = (current_total_balance * 0.0325) / 365
-                else:
-                    # Calculate interest for the first 1M at 3.25%
-                    tier1_interest = (tier_limit * 0.0325) / 365
-                    # Calculate interest for the excess at 3.75%
-                    excess_balance = current_total_balance - tier_limit
-                    tier2_interest = (excess_balance * 0.0375) / 365
-                    daily_gross = tier1_interest + tier2_interest
-                
-                # 2. Apply 20% Philippine Withholding Tax
-                tax_amount = daily_gross * 0.20
-                net_interest = round(daily_gross - tax_amount, 2)
-                
-                # 3. Log only if it meets the 1 centavo minimum credit threshold
-                if net_interest >= 0.01:
-                    new_entry = {
-                        'Date': next_date_str,
-                        'Transaction': 'Maribank Interest',
-                        'Category': 'Interest',
-                        'EJ Balance': 0, 
-                        'EJ & Neng Balance': 0, 
-                        'Incoming EJ': 0.0,
-                        'Outgoing EJ': 0.0,
-                        'Incoming (EJ & Neng)': net_interest,
-                        'Outgoing (EJ & Neng)': 0.0,
-                        'Total': 0 
-                    }
-                    storage.add_entry(new_entry)
-                    session_interest += net_interest
-        
-        next_date += timedelta(days=1)
+        if entries_added:
+            storage.recalculate_balances()
+    except Exception as e:
+        print(f"Error in check_maribank_interest: {e}")
 
 @app.route('/')
 @login_required
