@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from finance_tracker import SupabaseStorage
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import os
 import json
@@ -44,7 +44,7 @@ def check_maribank_interest():
         # Filter for Maribank Interest transactions
         interest_df = df[df['Transaction'].str.strip() == 'Maribank Interest']
         
-        today = datetime.now().date()
+        today = datetime.now(timezone(timedelta(hours=8))).date()
         
         if not interest_df.empty:
             last_interest_date = interest_df['DateObj'].max().date()
@@ -96,6 +96,7 @@ def check_maribank_interest():
                     if net_interest >= 0.01:
                         new_entry = {
                             'Date': next_date_str,
+                            'Time': datetime.now(timezone(timedelta(hours=8))).strftime('%H:%M:%S'),
                             'Transaction': 'Maribank Interest',
                             'Category': 'Interest',
                             'EJ Balance': 0, 
@@ -117,6 +118,46 @@ def check_maribank_interest():
     except Exception as e:
         print(f"Error in check_maribank_interest: {e}")
 
+def recover_missing_times():
+    """
+    One-time recovery function to backfill missing 'Time' values
+    using the 'created_at' timestamp from the database.
+    """
+    try:
+        if not storage.exists():
+            return
+
+        df = storage.get_all_transactions()
+        count = 0
+        
+        # Check if required columns exist
+        if 'created_at' in df.columns and 'Time' in df.columns:
+            # Filter for rows where Time is missing
+            missing_time_df = df[pd.isna(df['Time']) | (df['Time'].astype(str).str.strip() == '')]
+            
+            if not missing_time_df.empty:
+                for _, row in missing_time_df.iterrows():
+                    created_at = row.get('created_at')
+                    if created_at and pd.notna(created_at):
+                        try:
+                            # Parse Supabase timestamp (ISO format with timezone)
+                            dt_obj = datetime.fromisoformat(str(created_at).replace('Z', '+00:00'))
+                            # Convert to PHT (UTC+8)
+                            dt_pht = dt_obj.astimezone(timezone(timedelta(hours=8)))
+                            new_time = dt_pht.strftime('%H:%M:%S')
+                            
+                            # Update entry without recalculating balances (for speed)
+                            storage.update_entry(row['ID'], {'Time': new_time}, recalculate=False)
+                            count += 1
+                        except Exception as e:
+                            print(f"Failed to recover time for ID {row.get('ID')}: {e}")
+                
+                if count > 0:
+                    # Flash a message to the user on the next page render
+                    flash(f'Automatically recovered missing timestamps for {count} past transaction(s).')
+    except Exception as e:
+        print(f"Error during automatic time recovery: {e}")
+
 @app.route('/')
 @login_required
 def index():
@@ -124,6 +165,7 @@ def index():
         return redirect(url_for('initialize'))
     
     check_maribank_interest()
+    recover_missing_times()
     
     ej_bal, shared_bal = storage.get_last_balances()
     total = ej_bal + shared_bal
@@ -140,6 +182,18 @@ def index():
     category_data = {}
     
     if not df.empty:
+        if 'Time' not in df.columns:
+            df['Time'] = ''
+        df['Time'] = df['Time'].fillna('')
+
+        # Format Time to AM/PM for display
+        def format_time(t):
+            try:
+                return datetime.strptime(str(t), '%H:%M:%S').strftime('%I:%M %p')
+            except (ValueError, TypeError):
+                return t
+        df['Time'] = df['Time'].apply(format_time)
+
         chart_labels = df['Date'].tolist()
         chart_ej = df['EJ Balance'].tolist()
         chart_shared = df['EJ & Neng Balance'].tolist()
@@ -207,8 +261,8 @@ def initialize():
 
         total = ej_start + shared_start
         initial_data = {
-            'Date': datetime.now().strftime('%Y-%m-%d'),
-            'Time': datetime.now().strftime('%H:%M:%S'),
+            'Date': datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d'),
+            'Time': datetime.now(timezone(timedelta(hours=8))).strftime('%H:%M:%S'),
             'Transaction': 'Initial Balance',
             'Category': 'Initial',
             'EJ Balance': round(ej_start, 2),
@@ -233,7 +287,7 @@ def add_transaction():
     if request.method == 'POST':
         date_input = request.form.get('date')
         if not date_input:
-            date_input = datetime.now().strftime('%Y-%m-%d')
+            date_input = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
         
         description = request.form.get('description', 'No Description')
         category = request.form.get('category', 'Other')
@@ -254,7 +308,7 @@ def add_transaction():
 
         new_entry = {
             'Date': date_input,
-            'Time': datetime.now().strftime('%H:%M:%S'),
+            'Time': datetime.now(timezone(timedelta(hours=8))).strftime('%H:%M:%S'),
             'Transaction': description,
             'Category': category,
             'EJ Balance': round(new_ej, 2),
@@ -269,7 +323,8 @@ def add_transaction():
         storage.add_entry(new_entry)
         return redirect(url_for('index'))
 
-    return render_template('add.html', today=datetime.now().strftime('%Y-%m-%d'))
+    pht_now = datetime.now(timezone(timedelta(hours=8)))
+    return render_template('add.html', today=pht_now.strftime('%Y-%m-%d'))
 
 @app.route('/edit/<int:id>', methods=['GET', 'POST'])
 @login_required
@@ -282,6 +337,7 @@ def edit_transaction(id):
         try:
             update_data = {
                 'Date': request.form.get('date'),
+                'Time': datetime.now(timezone(timedelta(hours=8))).strftime('%H:%M:%S'),
                 'Transaction': request.form.get('description'),
                 'Category': request.form.get('category'),
                 'Incoming EJ': float(request.form.get('inc_ej', 0) or 0),
@@ -312,6 +368,19 @@ def view_ledger():
         return redirect(url_for('initialize'))
         
     df = storage.get_all_transactions()
+    if not df.empty:
+        if 'Time' not in df.columns:
+            df['Time'] = ''
+        df['Time'] = df['Time'].fillna('')
+
+        # Format Time to AM/PM for display
+        def format_time(t):
+            try:
+                return datetime.strptime(str(t), '%H:%M:%S').strftime('%I:%M %p')
+            except (ValueError, TypeError):
+                return t
+        df['Time'] = df['Time'].apply(format_time)
+
     transactions = df.to_dict('records') if not df.empty else []
     return render_template('ledger.html', transactions=transactions[::-1])
 
@@ -361,6 +430,19 @@ def chat_api():
         return jsonify({"status": "success"})
     
     messages = storage.get_chat_messages()
+    for message in messages:
+        if 'created_at' in message and message['created_at']:
+            try:
+                # Supabase returns ISO 8601 format string with timezone
+                dt_obj = datetime.fromisoformat(message['created_at'].replace('Z', '+00:00'))
+                dt_obj = dt_obj + timedelta(hours=8) # Convert to PHT
+                # Format to something like '12:34 PM'
+                message['time'] = dt_obj.strftime('%I:%M %p')
+            except (ValueError, TypeError):
+                message['time'] = '' # Fallback for invalid format
+        else:
+            message['time'] = ''
+
     return jsonify({"messages": messages})
 
 @app.route('/export')
@@ -370,10 +452,15 @@ def export_data():
         return redirect(url_for('initialize'))
         
     df = storage.get_all_transactions()
+    if not df.empty:
+        if 'Time' not in df.columns:
+            df['Time'] = ''
+        df['Time'] = df['Time'].fillna('')
+
     return Response(
         df.to_csv(index=False, encoding='utf-8-sig'),
         mimetype="text/csv",
-        headers={"Content-disposition": f"attachment; filename=finance_ledger_{datetime.now().strftime('%Y-%m-%d')}.csv"}
+        headers={"Content-disposition": f"attachment; filename=finance_ledger_{datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d')}.csv"}
     )
 
 if __name__ == '__main__':

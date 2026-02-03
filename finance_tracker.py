@@ -107,14 +107,7 @@ class SupabaseStorage:
     def initialize(self, initial_data):
         # Convert Title Case data to snake_case for DB
         db_data = {self.col_map.get(k, k): v for k, v in initial_data.items()}
-        try:
-            self.supabase.table(self.table).insert(db_data).execute()
-        except Exception as e:
-            if "Could not find the 'time' column" in str(e) and 'time' in db_data:
-                del db_data['time']
-                self.supabase.table(self.table).insert(db_data).execute()
-            else:
-                raise e
+        self.supabase.table(self.table).insert(db_data).execute()
         print("Ledger initialized in Supabase.")
 
     def get_last_balances(self):
@@ -127,14 +120,7 @@ class SupabaseStorage:
 
     def add_entry(self, entry_data, recalculate=True):
         db_data = {self.col_map.get(k, k): v for k, v in entry_data.items()}
-        try:
-            self.supabase.table(self.table).insert(db_data).execute()
-        except Exception as e:
-            if "Could not find the 'time' column" in str(e) and 'time' in db_data:
-                del db_data['time']
-                self.supabase.table(self.table).insert(db_data).execute()
-            else:
-                raise e
+        self.supabase.table(self.table).insert(db_data).execute()
         if recalculate:
             self.recalculate_balances()
 
@@ -145,18 +131,12 @@ class SupabaseStorage:
             return {self.rev_map.get(k, k): v for k, v in res.data[0].items()}
         return None
 
-    def update_entry(self, entry_id, data):
+    def update_entry(self, entry_id, data, recalculate=True):
         # Convert to DB keys
         db_data = {self.col_map.get(k, k): v for k, v in data.items() if k in self.col_map}
-        try:
-            self.supabase.table(self.table).update(db_data).eq("id", entry_id).execute()
-        except Exception as e:
-            if "Could not find the 'time' column" in str(e) and 'time' in db_data:
-                del db_data['time']
-                self.supabase.table(self.table).update(db_data).eq("id", entry_id).execute()
-            else:
-                raise e
-        self.recalculate_balances()
+        self.supabase.table(self.table).update(db_data).eq("id", entry_id).execute()
+        if recalculate:
+            self.recalculate_balances()
 
     def delete_entry(self, entry_id):
         self.supabase.table(self.table).delete().eq("id", entry_id).execute()

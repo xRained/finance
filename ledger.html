@@ -10,13 +10,16 @@
         {% endwith %}
         <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
             <h4 class="card-title mb-0 fw-bold">Full Ledger History</h4>
-            <a href="/export" class="btn btn-success btn-sm"><i class="bi bi-download me-2"></i>Export CSV</a>
+            <div>
+                <a href="/export" class="btn btn-success btn-sm"><i class="bi bi-download me-2"></i>Export CSV</a>
+            </div>
         </div>
         <div class="table-responsive">
             <table class="table table-hover align-middle text-nowrap">
                 <thead class="bg-light">
                     <tr>
                         <th class="text-muted small text-uppercase">Date</th>
+                        <th class="text-muted small text-uppercase">Time</th>
                         <th class="text-muted small text-uppercase">Category</th>
                         <th class="text-muted small text-uppercase">Transaction</th>
                         <th class="text-muted small text-uppercase text-end">EJ Bal</th>
@@ -33,6 +36,7 @@
                     {% for row in transactions %}
                     <tr>
                         <td class="text-muted">{{ row['Date'] }}</td>
+                        <td class="text-muted">{{ row['Time'] }}</td>
                         <td><span class="badge bg-light text-dark border">{{ row.get('Category', 'Other') }}</span></td>
                         <td class="fw-medium">{{ row['Transaction'] }}</td>
                         <td class="text-end">₱{{ "{:,.2f}".format(row['EJ Balance']) }}</td>
