@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body p-3 p-md-4">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="alert alert-success py-2">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+            <h4 class="card-title mb-0 fw-bold">Full Ledger History</h4>
+            <div class="d-flex gap-2">
+                <input type="text" id="ledgerSearch" class="form-control form-control-sm" placeholder="Search transactions..." style="width: 200px;">
+                <a href="/export" class="btn btn-success btn-sm"><i class="bi bi-download me-2"></i>Export CSV</a>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle text-nowrap">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="text-muted small text-uppercase">Date</th>
+                        <th class="text-muted small text-uppercase">Time</th>
+                        <th class="text-muted small text-uppercase">Category</th>
+                        <th class="text-muted small text-uppercase">Transaction</th>
+                        <th class="text-muted small text-uppercase text-end">EJ Bal</th>
+                        <th class="text-muted small text-uppercase text-end">EJ & Neng Bal</th>
+                        <th class="text-muted small text-uppercase text-end text-success">In (EJ)</th>
+                        <th class="text-muted small text-uppercase text-end text-danger">Out (EJ)</th>
+                        <th class="text-muted small text-uppercase text-end text-success">In (EJ & Neng)</th>
+                        <th class="text-muted small text-uppercase text-end text-danger">Out (EJ & Neng)</th>
+                        <th class="text-muted small text-uppercase text-end">Total</th>
+                        <th class="text-muted small text-uppercase text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="border-top-0">
+                    {% for row in transactions %}
+                    <tr>
+                        <td class="text-muted">{{ row['Date'] }}</td>
+                        <td class="text-muted">{{ row['Time'] }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ row.get('Category', 'Other') }}</span></td>
+                        <td class="fw-medium {{ 'text-danger' if row.get('Last Edited') }}">
+                            {{ row['Transaction'] }}
+                            {% if row.get('Last Edited') %}
+                                <i class="bi bi-pencil-fill small ms-1" style="font-size: 0.7em;" title="Edited"></i>
+                            {% endif %}
+                            {% if row.get('Receipt') %}
+                                <a href="/static/uploads/{{ row['Receipt'] }}" target="_blank" class="text-muted ms-1"><i class="bi bi-paperclip"></i></a>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">₱{{ "{:,.2f}".format(row['EJ Balance']) }}</td>
+                        <td class="text-end">₱{{ "{:,.2f}".format(row['EJ & Neng Balance']) }}</td>
+                        <td class="text-end text-success">{{ "₱{:,.2f}".format(row['Incoming EJ']) if row['Incoming EJ'] != 0 else '-' }}</td>
+                        <td class="text-end text-danger">{{ "₱{:,.2f}".format(row['Outgoing EJ']) if row['Outgoing EJ'] != 0 else '-' }}</td>
+                        <td class="text-end text-success">{{ "₱{:,.2f}".format(row['Incoming (EJ & Neng)']) if row['Incoming (EJ & Neng)'] != 0 else '-' }}</td>
+                        <td class="text-end text-danger">{{ "₱{:,.2f}".format(row['Outgoing (EJ & Neng)']) if row['Outgoing (EJ & Neng)'] != 0 else '-' }}</td>
+                        <td class="text-end fw-bold">₱{{ "{:,.2f}".format(row['Total']) }}</td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-outline-info border-0 view-btn" 
+                                data-bs-toggle="modal" 
+                                data-bs-target="#transactionModal"
+                                data-id="{{ row['ID'] }}"
+                                data-date="{{ row['Date'] }}"
+                                data-time="{{ row['Time'] }}"
+                                data-category="{{ row.get('Category', 'Other') }}"
+                                data-description="{{ row['Transaction'] }}"
+                                data-receipt="{{ row.get('Receipt') or '' }}"
+                                data-edited="{{ row.get('Last Edited') or '' }}"
+                                data-created="{{ row.get('Created At') or '' }}"
+                                data-inc-ej="{{ '{:,.2f}'.format(row['Incoming EJ']) if row['Incoming EJ'] != 0 else '0.00' }}"
+                                data-out-ej="{{ '{:,.2f}'.format(row['Outgoing EJ']) if row['Outgoing EJ'] != 0 else '0.00' }}"
+                                data-inc-shared="{{ '{:,.2f}'.format(row['Incoming (EJ & Neng)']) if row['Incoming (EJ & Neng)'] != 0 else '0.00' }}"
+                                data-out-shared="{{ '{:,.2f}'.format(row['Outgoing (EJ & Neng)']) if row['Outgoing (EJ & Neng)'] != 0 else '0.00' }}"
+                                data-ej-bal="{{ '{:,.2f}'.format(row['EJ Balance']) }}"
+                                data-shared-bal="{{ '{:,.2f}'.format(row['EJ & Neng Balance']) }}"
+                                data-total-bal="{{ '{:,.2f}'.format(row['Total']) }}"
+                                >
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Transaction Details Modal -->
+<div class="modal fade" id="transactionModal" tabindex="-1" aria-labelledby="transactionModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="transactionModalLabel">Transaction Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row">
+            <div class="col-md-6">
+                <h6 id="modalDescription" class="fw-bold mb-3"></h6>
+                <p class="mb-1"><strong class="text-muted">Date:</strong> <span id="modalDate"></span></p>
+                <p class="mb-1"><strong class="text-muted">Time:</strong> <span id="modalTime"></span></p>
+                <p class="mb-1"><strong class="text-muted">Inputted:</strong> <span id="modalCreatedDate" class="text-muted small"></span></p>
+                <p class="mb-1 text-danger fw-bold" id="modalEditedContainer" style="display: none;"><i class="bi bi-pencil-square me-1"></i>Edited: <span id="modalEditedDate"></span></p>
+                <p class="mb-3"><strong class="text-muted">Category:</strong> <span id="modalCategory" class="badge"></span></p>
+
+                <hr>
+
+                <h6 class="text-primary fw-bold mt-3">EJ Personal Account</h6>
+                <p class="mb-1 text-success">Incoming: ₱<span id="modalIncEj"></span></p>
+                <p class="mb-3 text-danger">Outgoing: ₱<span id="modalOutEj"></span></p>
+
+                <h6 class="text-success fw-bold">EJ & Neng Account</h6>
+                <p class="mb-1 text-success">Incoming: ₱<span id="modalIncShared"></span></p>
+                <p class="mb-3 text-danger">Outgoing: ₱<span id="modalOutShared"></span></p>
+                
+                <hr>
+                
+                <h6 class="fw-bold mt-3">Resulting Balances</h6>
+                <p class="mb-1">EJ Balance: ₱<span id="modalEjBal"></span></p>
+                <p class="mb-1">EJ & Neng Balance: ₱<span id="modalSharedBal"></span></p>
+                <p class="mb-1"><strong>Total: ₱<span id="modalTotalBal"></span></strong></p>
+
+            </div>
+            <div class="col-md-6">
+                <div id="modalReceiptContainer" style="display: none;">
+                    <h6 class="fw-bold mb-2">Receipt</h6>
+                    <a href="#" id="modalReceiptLink" target="_blank">
+                        <img id="modalReceiptImage" src="" class="img-fluid rounded border" alt="Receipt">
+                    </a>
+                </div>
+            </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <a href="#" id="modalDeleteBtn" class="btn btn-outline-danger me-auto" onclick="return confirm('Are you sure? This will recalculate all subsequent balances.')">Delete</a>
+        <a href="#" id="modalEditBtn" class="btn btn-primary">Edit</a>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+    // Simple client-side search functionality
+    document.getElementById('ledgerSearch').addEventListener('keyup', function() {
+        const searchText = this.value.toLowerCase();
+        const rows = document.querySelectorAll('tbody tr');
+        
+        rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(searchText) ? '' : 'none';
+        });
+    });
+
+    // Modal population script
+    const transactionModal = document.getElementById('transactionModal');
+    if (transactionModal) {
+        transactionModal.addEventListener('show.bs.modal', event => {
+            const button = event.relatedTarget;
+
+            // Extract info from data-* attributes
+            const id = button.dataset.id;
+            const date = button.dataset.date;
+            const time = button.dataset.time;
+            const category = button.dataset.category;
+            const description = button.dataset.description;
+            const receipt = button.dataset.receipt;
+            const edited = button.dataset.edited;
+            const created = button.dataset.created;
+            const incEj = button.dataset.incEj;
+            const outEj = button.dataset.outEj;
+            const incShared = button.dataset.incShared;
+            const outShared = button.dataset.outShared;
+            const ejBal = button.dataset.ejBal;
+            const sharedBal = button.dataset.sharedBal;
+            const totalBal = button.dataset.totalBal;
+
+            // Update the modal's content
+            transactionModal.querySelector('#transactionModalLabel').textContent = `Details for #${id}`;
+            transactionModal.querySelector('#modalDescription').textContent = description;
+            transactionModal.querySelector('#modalDate').textContent = date;
+            transactionModal.querySelector('#modalTime').textContent = time;
+
+            if (created) {
+                const createdObj = new Date(created);
+                transactionModal.querySelector('#modalCreatedDate').textContent = createdObj.toLocaleString();
+            } else {
+                transactionModal.querySelector('#modalCreatedDate').textContent = 'N/A';
+            }
+
+            const editedContainer = transactionModal.querySelector('#modalEditedContainer');
+            if (edited) {
+                // Format the ISO date to be readable
+                const dateObj = new Date(edited);
+                transactionModal.querySelector('#modalEditedDate').textContent = dateObj.toLocaleString();
+                editedContainer.style.display = 'block';
+            } else {
+                editedContainer.style.display = 'none';
+            }
+            
+            const categoryBadge = transactionModal.querySelector('#modalCategory');
+            categoryBadge.textContent = category;
+            categoryBadge.className = 'badge bg-light text-dark border';
+
+            transactionModal.querySelector('#modalIncEj').textContent = incEj;
+            transactionModal.querySelector('#modalOutEj').textContent = outEj;
+            transactionModal.querySelector('#modalIncShared').textContent = incShared;
+            transactionModal.querySelector('#modalOutShared').textContent = outShared;
+            transactionModal.querySelector('#modalEjBal').textContent = ejBal;
+            transactionModal.querySelector('#modalSharedBal').textContent = sharedBal;
+            transactionModal.querySelector('#modalTotalBal').textContent = totalBal;
+
+            const receiptContainer = transactionModal.querySelector('#modalReceiptContainer');
+            const receiptImage = transactionModal.querySelector('#modalReceiptImage');
+            const receiptLink = transactionModal.querySelector('#modalReceiptLink');
+
+            if (receipt) {
+                const receiptUrl = `/static/uploads/${receipt}`;
+                receiptImage.src = receiptUrl;
+                receiptLink.href = receiptUrl;
+                receiptContainer.style.display = 'block';
+            } else {
+                receiptContainer.style.display = 'none';
+                receiptImage.src = '';
+                receiptLink.href = '#';
+            }
+
+            transactionModal.querySelector('#modalEditBtn').href = `/edit/${id}`;
+            transactionModal.querySelector('#modalDeleteBtn').href = `/delete/${id}`;
+        });
+    }
+</script>
+{% endblock %}

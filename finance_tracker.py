@@ -1,7 +1,7 @@
 import pandas as pd
 from tabulate import tabulate
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -90,7 +90,10 @@ class SupabaseStorage:
             'Outgoing EJ': 'outgoing_ej',
             'Incoming (EJ & Neng)': 'incoming_ej_neng',
             'Outgoing (EJ & Neng)': 'outgoing_ej_neng',
-            'Total': 'total'
+            'Total': 'total',
+            'Receipt': 'receipt',
+            'Last Edited': 'last_edited_at',
+            'Created At': 'created_at'
         }
         # Reverse map for reading back
         self.rev_map = {v: k for k, v in self.col_map.items()}
@@ -119,6 +122,10 @@ class SupabaseStorage:
         return 0.0, 0.0
 
     def add_entry(self, entry_data, recalculate=True):
+        # Set Created At to Philippines Time (UTC+8)
+        ph_tz = timezone(timedelta(hours=8))
+        entry_data['Created At'] = datetime.now(ph_tz).isoformat()
+        
         db_data = {self.col_map.get(k, k): v for k, v in entry_data.items()}
         self.supabase.table(self.table).insert(db_data).execute()
         if recalculate:
@@ -132,6 +139,10 @@ class SupabaseStorage:
         return None
 
     def update_entry(self, entry_id, data, recalculate=True):
+        # Record the edit timestamp in Philippines Time (UTC+8)
+        ph_tz = timezone(timedelta(hours=8))
+        data['Last Edited'] = datetime.now(ph_tz).isoformat()
+        
         # Convert to DB keys
         db_data = {self.col_map.get(k, k): v for k, v in data.items() if k in self.col_map}
         self.supabase.table(self.table).update(db_data).eq("id", entry_id).execute()
@@ -226,6 +237,7 @@ class FinanceTracker:
         # Create the initial entry row
         initial_data = {
             'Date': datetime.now().strftime('%Y-%m-%d'),
+            'Time': datetime.now().strftime('%I:%M:%S %p'),
             'Transaction': 'Initial Balance',
             'EJ Balance': round(ej_start, 2),
             'EJ & Neng Balance': round(shared_start, 2),
@@ -282,6 +294,7 @@ class FinanceTracker:
         # Create new record
         new_entry = {
             'Date': date_input,
+            'Time': datetime.now().strftime('%I:%M:%S %p'),
             'Transaction': description,
             'EJ Balance': round(new_ej, 2),
             'EJ & Neng Balance': round(new_shared, 2),
