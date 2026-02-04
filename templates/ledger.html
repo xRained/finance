@@ -48,13 +48,13 @@
                                 <a href="/static/uploads/{{ row['Receipt'] }}" target="_blank" class="text-muted ms-1"><i class="bi bi-paperclip"></i></a>
                             {% endif %}
                         </td>
-                        <td class="text-end">₱{{ "{:,.2f}".format(row['EJ Balance']) }}</td>
-                        <td class="text-end">₱{{ "{:,.2f}".format(row['EJ & Neng Balance']) }}</td>
-                        <td class="text-end text-success">{{ "₱{:,.2f}".format(row['Incoming EJ']) if row['Incoming EJ'] != 0 else '-' }}</td>
-                        <td class="text-end text-danger">{{ "₱{:,.2f}".format(row['Outgoing EJ']) if row['Outgoing EJ'] != 0 else '-' }}</td>
-                        <td class="text-end text-success">{{ "₱{:,.2f}".format(row['Incoming (EJ & Neng)']) if row['Incoming (EJ & Neng)'] != 0 else '-' }}</td>
-                        <td class="text-end text-danger">{{ "₱{:,.2f}".format(row['Outgoing (EJ & Neng)']) if row['Outgoing (EJ & Neng)'] != 0 else '-' }}</td>
-                        <td class="text-end fw-bold">₱{{ "{:,.2f}".format(row['Total']) }}</td>
+                        <td class="text-end">{{ row['EJ Balance'] }}</td>
+                        <td class="text-end">{{ row['EJ & Neng Balance'] }}</td>
+                        <td class="text-end text-success">{{ row['Incoming EJ'] }}</td>
+                        <td class="text-end text-danger">{{ row['Outgoing EJ'] }}</td>
+                        <td class="text-end text-success">{{ row['Incoming (EJ & Neng)'] }}</td>
+                        <td class="text-end text-danger">{{ row['Outgoing (EJ & Neng)'] }}</td>
+                        <td class="text-end fw-bold">{{ row['Total'] }}</td>
                         <td class="text-end">
                             <button type="button" class="btn btn-sm btn-outline-info border-0 view-btn" 
                                 data-bs-toggle="modal" 
@@ -67,13 +67,13 @@
                                 data-receipt="{{ row.get('Receipt') or '' }}"
                                 data-edited="{{ row.get('Last Edited') or '' }}"
                                 data-created="{{ row.get('Created At') or '' }}"
-                                data-inc-ej="{{ '{:,.2f}'.format(row['Incoming EJ']) if row['Incoming EJ'] != 0 else '0.00' }}"
-                                data-out-ej="{{ '{:,.2f}'.format(row['Outgoing EJ']) if row['Outgoing EJ'] != 0 else '0.00' }}"
-                                data-inc-shared="{{ '{:,.2f}'.format(row['Incoming (EJ & Neng)']) if row['Incoming (EJ & Neng)'] != 0 else '0.00' }}"
-                                data-out-shared="{{ '{:,.2f}'.format(row['Outgoing (EJ & Neng)']) if row['Outgoing (EJ & Neng)'] != 0 else '0.00' }}"
-                                data-ej-bal="{{ '{:,.2f}'.format(row['EJ Balance']) }}"
-                                data-shared-bal="{{ '{:,.2f}'.format(row['EJ & Neng Balance']) }}"
-                                data-total-bal="{{ '{:,.2f}'.format(row['Total']) }}"
+                                data-inc-ej="{{ row['Incoming EJ'] }}"
+                                data-out-ej="{{ row['Outgoing EJ'] }}"
+                                data-inc-shared="{{ row['Incoming (EJ & Neng)'] }}"
+                                data-out-shared="{{ row['Outgoing (EJ & Neng)'] }}"
+                                data-ej-bal="{{ row['EJ Balance'] }}"
+                                data-shared-bal="{{ row['EJ & Neng Balance'] }}"
+                                data-total-bal="{{ row['Total'] }}"
                                 >
                                 <i class="bi bi-eye"></i>
                             </button>
@@ -107,19 +107,19 @@
                 <hr>
 
                 <h6 class="text-primary fw-bold mt-3">EJ Personal Account</h6>
-                <p class="mb-1 text-success">Incoming: ₱<span id="modalIncEj"></span></p>
-                <p class="mb-3 text-danger">Outgoing: ₱<span id="modalOutEj"></span></p>
+                <p class="mb-1 text-success">Incoming: <span id="modalIncEj"></span></p>
+                <p class="mb-3 text-danger">Outgoing: <span id="modalOutEj"></span></p>
 
                 <h6 class="text-success fw-bold">EJ & Neng Account</h6>
-                <p class="mb-1 text-success">Incoming: ₱<span id="modalIncShared"></span></p>
-                <p class="mb-3 text-danger">Outgoing: ₱<span id="modalOutShared"></span></p>
+                <p class="mb-1 text-success">Incoming: <span id="modalIncShared"></span></p>
+                <p class="mb-3 text-danger">Outgoing: <span id="modalOutShared"></span></p>
                 
                 <hr>
                 
                 <h6 class="fw-bold mt-3">Resulting Balances</h6>
-                <p class="mb-1">EJ Balance: ₱<span id="modalEjBal"></span></p>
-                <p class="mb-1">EJ & Neng Balance: ₱<span id="modalSharedBal"></span></p>
-                <p class="mb-1"><strong>Total: ₱<span id="modalTotalBal"></span></strong></p>
+                <p class="mb-1">EJ Balance: <span id="modalEjBal"></span></p>
+                <p class="mb-1">EJ & Neng Balance: <span id="modalSharedBal"></span></p>
+                <p class="mb-1"><strong>Total: <span id="modalTotalBal"></span></strong></p>
 
             </div>
             <div class="col-md-6">

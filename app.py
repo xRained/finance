@@ -73,6 +73,9 @@ def logout():
 @app.route('/')
 @login_required
 def index():
+    # Check for and apply daily interest before loading data
+    tracker.check_maribank_interest()
+
     df = tracker.storage.get_all_transactions()
     if df.empty or len(df) < 2:
         return render_template('init.html')
@@ -86,8 +89,10 @@ def index():
 
     # Recent transactions
     df_recent = df.tail(5).iloc[::-1].copy()
-    df_recent['Amount'] = (df_recent['Incoming EJ'] + df_recent['Incoming (EJ & Neng)']) - (df_recent['Outgoing EJ'] + df_recent['Outgoing (EJ & Neng)'])
-    df_recent['Amount'] = df_recent['Amount'].apply(lambda x: f"₱{x:,.2f}" if x > 0 else f"-₱{-x:,.2f}")
+    # Calculate Amount treating NaNs as 0 to ensure valid totals appear
+    df_recent['Amount'] = (df_recent['Incoming EJ'].fillna(0) + df_recent['Incoming (EJ & Neng)'].fillna(0)) - \
+                          (df_recent['Outgoing EJ'].fillna(0) + df_recent['Outgoing (EJ & Neng)'].fillna(0))
+    df_recent['Amount'] = df_recent['Amount'].apply(lambda x: "-" if (x != x or x is None) else (f"₱{x:,.2f}" if x >= 0 else f"-₱{-x:,.2f}"))
     recent = df_recent.to_dict('records')
 
     # Chart data
@@ -131,6 +136,13 @@ def ledger():
     if 'Time' in df.columns:
         df['Time'] = df['Time'].apply(format_time_12hr)
     
+    # Format numeric columns: NaN becomes "-", numbers become currency
+    numeric_cols = ['EJ Balance', 'EJ & Neng Balance', 'Incoming EJ', 'Outgoing EJ', 
+                    'Incoming (EJ & Neng)', 'Outgoing (EJ & Neng)', 'Total']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: "-" if (x != x or x is None) else (f"₱{x:,.2f}" if x >= 0 else f"-₱{-x:,.2f}"))
+
     transactions = df.iloc[::-1].to_dict('records')
     return render_template('ledger.html', transactions=transactions, search_query=query)
 
@@ -243,6 +255,36 @@ def export_csv():
         'Content-Type': 'text/csv',
         'Content-Disposition': 'attachment; filename=finance_ledger.csv'
     }
+
+# --- Chat Routes ---
+@app.route('/chat/join', methods=['GET', 'POST'])
+@login_required
+def chat_join():
+    # Handle nickname setting from base.html widget
+    if request.method == 'POST':
+        data = request.get_json(silent=True)
+        if data and 'nickname' in data:
+            session['chat_nickname'] = data['nickname']
+            return jsonify({'status': 'success'})
+
+    messages = tracker.storage.get_chat_messages()
+    return jsonify(messages)
+
+@app.route('/chat/send', methods=['POST'])
+@login_required
+def chat_send():
+    data = request.json
+    nickname = data.get('nickname', 'Anonymous')
+    message = data.get('message', '')
+    if message:
+        tracker.storage.add_chat_message(nickname, message)
+        return jsonify({'status': 'success'})
+    return jsonify({'status': 'error'}), 400
+
+@app.route('/chat')
+@login_required
+def chat_page():
+    return render_template('chat.html')
 
 if __name__ == '__main__':
     app.run(debug=True)

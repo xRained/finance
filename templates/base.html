@@ -248,10 +248,10 @@
         async function fetchMessages() {
             if (!chatWindow.classList.contains('active')) return;
             try {
-                const res = await fetch('/api/chat');
-                const data = await res.json();
-                if (data.messages) {
-                    messagesContainer.innerHTML = data.messages.map(msg => {
+                const res = await fetch('/chat/join');
+                const messages = await res.json();
+                if (Array.isArray(messages)) {
+                    messagesContainer.innerHTML = messages.map(msg => {
                         const isMe = msg.nickname === currentUser;
                         const align = isMe ? 'end' : 'start';
                         const bg = isMe ? 'bg-primary text-white' : 'bg-light border text-dark';
@@ -286,10 +286,10 @@
                 const msg = input.value.trim();
                 if (!msg) return;
                 input.value = '';
-                await fetch('/api/chat', {
+                await fetch('/chat/send', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({message: msg})
+                    body: JSON.stringify({message: msg, nickname: currentUser})
                 });
                 fetchMessages();
             });

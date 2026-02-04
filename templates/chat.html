@@ -1,104 +1,105 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-8">
-        <div class="card shadow-sm" style="height: 80vh;">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
-                <h5 class="mb-0 fw-bold"><i class="bi bi-chat-quote-fill text-primary me-2"></i>Lapag here hinanaing </h5>
-                <div>
-                    <span class="badge bg-light text-dark me-2">Logged in as: <strong>{{ nickname }}</strong></span>
-                    <a href="/chat/leave" class="btn btn-sm btn-outline-danger">Leave</a>
-                </div>
+<div class="card">
+    <div class="card-body p-3 p-md-4">
+        <h4 class="card-title mb-4 fw-bold">Chat Room</h4>
+        <div id="chat-window" class="border rounded p-3 mb-3" style="height: 400px; overflow-y: auto; display: flex; flex-direction: column-reverse;">
+            <div id="chat-messages">
+                <!-- Messages will be loaded here -->
             </div>
-            
-            <!-- Messages Area -->
-            <div class="card-body bg-light overflow-auto" id="chat-box" style="flex: 1;">
-                <div class="text-center text-muted mt-5" id="loading-msg">
-                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                    Loading messages...
-                </div>
-            </div>
-
-            <!-- Input Area -->
-            <div class="card-footer bg-white p-3">
-                <form id="chat-form" class="d-flex gap-2">
-                    <input type="text" id="message-input" class="form-control" placeholder="Type a message..." autocomplete="off" required>
-                    <button type="submit" class="btn btn-primary"><i class="bi bi-send-fill"></i></button>
-                </form>
-            </div>
+        </div>
+        <div id="chat-form" class="d-flex gap-2">
+            <input type="text" id="nickname" class="form-control" placeholder="Your Name" style="width: 150px;">
+            <input type="text" id="message" class="form-control" placeholder="Type a message...">
+            <button id="send-button" class="btn btn-primary">Send</button>
         </div>
     </div>
 </div>
 
 <script>
-    const chatBox = document.getElementById('chat-box');
-    const chatForm = document.getElementById('chat-form');
-    const msgInput = document.getElementById('message-input');
-    const currentUser = "{{ nickname }}";
-    let lastMsgCount = 0;
+document.addEventListener('DOMContentLoaded', function() {
+    const chatMessages = document.getElementById('chat-messages');
+    const nicknameInput = document.getElementById('nickname');
+    const messageInput = document.getElementById('message');
+    const sendButton = document.getElementById('send-button');
 
-    // Function to scroll to bottom
-    function scrollToBottom() {
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }
-
-    // Function to fetch messages
+    // --- Load initial messages ---
     async function fetchMessages() {
         try {
-            const response = await fetch('/api/chat');
-            const data = await response.json();
-            
-            if (data.messages) {
-                // Only update if we have new messages to avoid flickering
-                if (data.messages.length !== lastMsgCount) {
-                    const wasAtBottom = chatBox.scrollHeight - chatBox.scrollTop === chatBox.clientHeight;
-                    
-                    chatBox.innerHTML = data.messages.map(msg => {
-                        const isMe = msg.nickname === currentUser;
-                        const align = isMe ? 'end' : 'start';
-                        const color = isMe ? 'bg-primary text-white' : 'bg-white border';
-                        const metaAlign = isMe ? 'text-end' : 'text-start';
-                        
-                        return `
-                            <div class="d-flex flex-column align-items-${align} mb-3">
-                                <div class="small text-muted mb-1 ${metaAlign}" style="font-size: 0.75rem;">
-                                    ${isMe ? 'You' : msg.nickname}
-                                </div>
-                                <div class="${color} rounded-3 px-3 py-2 shadow-sm" style="max-width: 75%; word-wrap: break-word;">
-                                    ${msg.message}
-                                </div>
-                            </div>
-                        `;
-                    }).join('');
-
-                    lastMsgCount = data.messages.length;
-                    scrollToBottom();
-                }
+            const response = await fetch('/chat/join', { method: 'POST' }); // Use POST as per previous fix
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
+            const messages = await response.json();
+            renderMessages(messages);
         } catch (error) {
-            console.error('Error fetching chat:', error);
+            console.error("Could not fetch messages:", error);
+            chatMessages.innerHTML = '<p class="text-danger text-center">Could not load chat.</p>';
         }
     }
 
-    // Send Message
-    chatForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const message = msgInput.value.trim();
-        if (!message) return;
+    // --- Render messages to the screen ---
+    function renderMessages(messages) {
+        chatMessages.innerHTML = ''; // Clear old messages
+        messages.forEach(msg => {
+            const msgElement = document.createElement('div');
+            msgElement.classList.add('mb-2');
+            
+            const timestamp = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-        msgInput.value = ''; // Clear input immediately
-        
-        await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: message })
+            msgElement.innerHTML = `
+                <div>
+                    <strong class="me-2">${escapeHTML(msg.nickname || 'Anonymous')}</strong>
+                    <span class="text-muted small">${timestamp}</span>
+                </div>
+                <p class="mb-0 ms-1">${escapeHTML(msg.message)}</p>
+            `;
+            chatMessages.prepend(msgElement); // Prepend to keep new messages at the bottom
         });
-        fetchMessages(); // Refresh immediately
+    }
+
+    // --- Send a new message ---
+    async function sendMessage() {
+        const nickname = nicknameInput.value.trim();
+        const message = messageInput.value.trim();
+
+        if (!nickname || !message) {
+            alert('Please enter your name and a message.');
+            return;
+        }
+
+        try {
+            await fetch('/chat/send', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ nickname, message }),
+            });
+            messageInput.value = ''; // Clear input
+            fetchMessages(); // Refresh messages immediately
+        } catch (error) {
+            console.error("Could not send message:", error);
+        }
+    }
+
+    // --- Utility to escape HTML ---
+    function escapeHTML(str) {
+        return str.replace(/[&<>"']/g, function(match) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[match];
+        });
+    }
+
+    // --- Event Listeners ---
+    sendButton.addEventListener('click', sendMessage);
+    messageInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') { sendMessage(); }
     });
 
-    // Initial load and polling
+    // --- Initial Load & Polling ---
     fetchMessages();
-    setInterval(fetchMessages, 2000); // Poll every 2 seconds
+    setInterval(fetchMessages, 5000); // Poll for new messages every 5 seconds
+});
 </script>
 {% endblock %}

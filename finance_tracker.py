@@ -215,6 +215,56 @@ class FinanceTracker:
         self.storage = SupabaseStorage()
         self.check_file()
 
+    def check_maribank_interest(self):
+        """Checks and adds daily interest from MariBank if not already logged."""
+        ph_tz = timezone(timedelta(hours=8))
+        today_str = datetime.now(ph_tz).strftime('%Y-%m-%d')
+
+        # Check if interest was already added today
+        all_transactions = self.storage.get_all_transactions()
+        if not all_transactions.empty:
+            # Ensure 'Date' and 'Transaction' columns exist before filtering
+            if 'Date' in all_transactions.columns and 'Transaction' in all_transactions.columns:
+                interest_today = all_transactions[
+                    (all_transactions['Date'] == today_str) &
+                    (all_transactions['Transaction'] == 'Maribank Interest')
+                ]
+                if not interest_today.empty:
+                    return  # Interest already logged for today
+
+        # Get last balances to calculate interest on the total
+        ej_bal, shared_bal = self.storage.get_last_balances()
+        current_total_balance = ej_bal + shared_bal
+
+        if current_total_balance > 0:
+            # MariBank PH Tiered Interest Logic
+            tier_limit = 1000000
+            if current_total_balance <= tier_limit:
+                daily_gross = (current_total_balance * 0.0325) / 365
+            else:
+                # Calculate interest for the first 1M at 3.25%
+                tier1_interest = (tier_limit * 0.0325) / 365
+                # Calculate interest for the excess at 3.75%
+                excess_balance = current_total_balance - tier_limit
+                tier2_interest = (excess_balance * 0.0375) / 365
+                daily_gross = tier1_interest + tier2_interest
+            
+            # Apply 20% Philippine Withholding Tax
+            tax_amount = daily_gross * 0.20
+            net_interest = round(daily_gross - tax_amount, 2)
+            
+            # Log only if it meets the 1 centavo minimum credit threshold
+            if net_interest >= 0.01:
+                new_entry = {
+                    'Date': today_str,
+                    'Time': datetime.now(ph_tz).strftime('%I:%M:%S %p'),
+                    'Category': 'Interest',
+                    'Transaction': 'Maribank Interest',
+                    'Incoming (EJ & Neng)': net_interest,
+                }
+                self.storage.add_entry(new_entry)
+                print(f"Logged Maribank interest for {today_str}: ₱{net_interest}")
+
     def check_file(self):
         """Checks if the CSV exists; if not, initializes it with starting balances."""
         if not self.storage.exists():
