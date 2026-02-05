@@ -1,11 +1,13 @@
 import os
 import uuid
 import json
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timezone, timedelta
 from functools import wraps
 from werkzeug.utils import secure_filename
-from flask import (Flask, render_template, request, redirect, url_for, flash, 
+from flask import (Flask, render_template, request, redirect, url_for, flash,
                    session, send_from_directory, jsonify)
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
 
 from finance_tracker import FinanceTracker
 
@@ -21,6 +23,33 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf'}
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 tracker = FinanceTracker()
+
+def run_daily_interest_check():
+    """Scheduled job to automatically calculate and add daily interest."""
+    # Using app.app_context() is good practice for background tasks
+    # that might interact with parts of the Flask app.
+    with app.app_context():
+        print(f"[{datetime.now()}] Running scheduled job: check_maribank_interest.")
+        try:
+            # The tracker is initialized globally. The Supabase client it uses
+            # should be thread-safe for concurrent requests.
+            tracker.check_maribank_interest()
+            print(f"[{datetime.now()}] Scheduled job: check_maribank_interest finished successfully.")
+        except Exception as e:
+            print(f"[{datetime.now()}] Error in scheduled job: {e}")
+
+# --- Scheduler Setup ---
+# Philippines Timezone (UTC+8)
+ph_tz = timezone(timedelta(hours=8))
+scheduler = BackgroundScheduler(daemon=True, timezone=ph_tz)
+# Schedule job to run every day at 1 minute past midnight (PH time)
+scheduler.add_job(run_daily_interest_check, 'cron', hour=0, minute=1)
+
+# Start the scheduler only in the main process (avoids duplication with Flask reloader)
+if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+    scheduler.start()
+    # Shut down the scheduler when exiting the app
+    atexit.register(lambda: scheduler.shutdown())
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -73,9 +102,6 @@ def logout():
 @app.route('/')
 @login_required
 def index():
-    # Check for and apply daily interest before loading data
-    tracker.check_maribank_interest()
-
     df = tracker.storage.get_all_transactions()
     if df.empty or len(df) < 2:
         return render_template('init.html')
@@ -268,6 +294,17 @@ def chat_join():
             return jsonify({'status': 'success'})
 
     messages = tracker.storage.get_chat_messages()
+    
+    # Format timestamps for display (UTC+8)
+    ph_tz = timezone(timedelta(hours=8))
+    for msg in messages:
+        if msg.get('created_at'):
+            try:
+                dt = datetime.fromisoformat(msg['created_at'].replace('Z', '+00:00'))
+                msg['time'] = dt.astimezone(ph_tz).strftime('%b %d, %I:%M %p')
+            except:
+                pass
+
     return jsonify(messages)
 
 @app.route('/chat/send', methods=['POST'])
@@ -280,6 +317,11 @@ def chat_send():
         tracker.storage.add_chat_message(nickname, message)
         return jsonify({'status': 'success'})
     return jsonify({'status': 'error'}), 400
+
+@app.route('/chat/leave')
+def chat_leave():
+    session.pop('chat_nickname', None)
+    return jsonify({'status': 'success'})
 
 @app.route('/chat')
 @login_required

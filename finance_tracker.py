@@ -201,10 +201,11 @@ class SupabaseStorage:
     def add_chat_message(self, nickname, message):
         if not self.supabase: return
         try:
+            ph_tz = timezone(timedelta(hours=8))
             self.supabase.table("chat_messages").insert({
                 "nickname": nickname, 
                 "message": message,
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now(ph_tz).isoformat()
             }).execute()
         except Exception as e:
             print(f"Chat add error: {e}")

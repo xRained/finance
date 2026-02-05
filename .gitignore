@@ -7,3 +7,6 @@ __pycache__/
 
 # Environment variables (Keep this secret!)
 .env
+
+# Ignore user-uploaded receipt files
+static/uploads/

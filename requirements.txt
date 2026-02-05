@@ -1,6 +1,7 @@
 Flask
+Werkzeug
+APScheduler
 pandas
+tabulate
 supabase
 python-dotenv
-tabulate
-gunicorn
