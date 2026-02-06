@@ -1,6 +1,4 @@
 Flask
-Werkzeug
-APScheduler
 pandas
 tabulate
 supabase

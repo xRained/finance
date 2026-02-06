@@ -2,25 +2,25 @@ import os
 import uuid
 import json
 from datetime import datetime, time as dt_time, timezone, timedelta
+import logging
+import pandas as pd
 from functools import wraps
 from werkzeug.utils import secure_filename
 from flask import (Flask, render_template, request, redirect, url_for, flash,
                    session, send_from_directory, jsonify)
-from apscheduler.schedulers.background import BackgroundScheduler
-import atexit
 
 from finance_tracker import FinanceTracker
+
+# --- Logging Setup ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # --- App Configuration ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-change-me')
-app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['PASSWORD'] = os.environ.get('APP_PASSWORD', '082628') # Set a strong password
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf'}
-
-# Ensure the upload folder exists
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 tracker = FinanceTracker()
 
@@ -29,35 +29,49 @@ def run_daily_interest_check():
     # Using app.app_context() is good practice for background tasks
     # that might interact with parts of the Flask app.
     with app.app_context():
-        print(f"[{datetime.now()}] Running scheduled job: check_maribank_interest.")
+        logger.info("Running scheduled job: check_maribank_interest.")
         try:
             # The tracker is initialized globally. The Supabase client it uses
             # should be thread-safe for concurrent requests.
             tracker.check_maribank_interest()
-            print(f"[{datetime.now()}] Scheduled job: check_maribank_interest finished successfully.")
+            logger.info("Scheduled job: check_maribank_interest finished successfully.")
         except Exception as e:
-            print(f"[{datetime.now()}] Error in scheduled job: {e}")
+            logger.error(f"Error in scheduled job: {e}")
 
-# --- Scheduler Setup ---
-# Philippines Timezone (UTC+8)
-ph_tz = timezone(timedelta(hours=8))
-scheduler = BackgroundScheduler(daemon=True, timezone=ph_tz)
-# Schedule job to run every day at 1 minute past midnight (PH time)
-scheduler.add_job(run_daily_interest_check, 'cron', hour=0, minute=1)
-
-# Start the scheduler only in the main process (avoids duplication with Flask reloader)
-if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-    scheduler.start()
-    # Shut down the scheduler when exiting the app
-    atexit.register(lambda: scheduler.shutdown())
+# --- Cron Route (Replaces Scheduler for Vercel) ---
+@app.route('/api/cron/daily-interest')
+def cron_daily_interest():
+    run_daily_interest_check()
+    return jsonify({'status': 'success', 'message': 'Daily interest check executed'})
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def safe_float(value, default=0.0):
+    """Safely converts a value to float, returning default on failure."""
+    if not value:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+@app.after_request
+def add_security_headers(response):
+    """Add basic security headers to responses."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    return response
+
 # --- Helper for time formatting ---
 def format_time_12hr(t):
     """Converts time string or object to 12-hour AM/PM format."""
+    # Handle NaN/None/NaT robustly
+    if pd.isna(t):
+        return "-"
     if isinstance(t, str) and t:
+        if t.strip().lower() == 'nan':
+            return "-"
         try:
             # Handles "HH:MM:SS"
             return datetime.strptime(t, '%H:%M:%S').strftime('%I:%M:%S %p')
@@ -90,7 +104,7 @@ def login():
             session['logged_in'] = True
             return redirect(url_for('index'))
         else:
-            flash('Incorrect password.')
+            flash('Incorrect password.', 'danger')
     return render_template('login.html')
 
 @app.route('/logout')
@@ -109,6 +123,9 @@ def index():
     # Reformat time for display
     if 'Time' in df.columns:
         df['Time'] = df['Time'].apply(format_time_12hr)
+
+    # Replace NaN values with None so they evaluate to False in Jinja2 templates
+    df = df.where(df.notnull(), None)
 
     last_row = df.iloc[-1]
     ej_bal, shared_bal, total = last_row['EJ Balance'], last_row['EJ & Neng Balance'], last_row['Total']
@@ -162,12 +179,21 @@ def ledger():
     if 'Time' in df.columns:
         df['Time'] = df['Time'].apply(format_time_12hr)
     
+    # Add a new column for the public URL of the receipt for Vercel compatibility
+    if 'Receipt' in df.columns:
+        df['ReceiptURL'] = df['Receipt'].apply(
+            lambda path: tracker.storage.get_receipt_url(path) if pd.notna(path) else None
+        )
+
     # Format numeric columns: NaN becomes "-", numbers become currency
     numeric_cols = ['EJ Balance', 'EJ & Neng Balance', 'Incoming EJ', 'Outgoing EJ', 
                     'Incoming (EJ & Neng)', 'Outgoing (EJ & Neng)', 'Total']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = df[col].apply(lambda x: "-" if (x != x or x is None) else (f"₱{x:,.2f}" if x >= 0 else f"-₱{-x:,.2f}"))
+
+    # Replace NaN values with None so they evaluate to False in Jinja2 templates
+    df = df.where(df.notnull(), None)
 
     transactions = df.iloc[::-1].to_dict('records')
     return render_template('ledger.html', transactions=transactions, search_query=query)
@@ -182,10 +208,10 @@ def add_transaction():
             'Time': datetime.now().strftime('%I:%M:%S %p'),
             'Category': form.get('category'),
             'Transaction': form.get('description'),
-            'Incoming EJ': float(form.get('inc_ej') or 0),
-            'Outgoing EJ': float(form.get('out_ej') or 0),
-            'Incoming (EJ & Neng)': float(form.get('inc_shared') or 0),
-            'Outgoing (EJ & Neng)': float(form.get('out_shared') or 0),
+            'Incoming EJ': safe_float(form.get('inc_ej')),
+            'Outgoing EJ': safe_float(form.get('out_ej')),
+            'Incoming (EJ & Neng)': safe_float(form.get('inc_shared')),
+            'Outgoing (EJ & Neng)': safe_float(form.get('out_shared')),
             'Receipt': None
         }
 
@@ -193,13 +219,20 @@ def add_transaction():
         if 'receipt' in request.files:
             file = request.files['receipt']
             if file and file.filename != '' and allowed_file(file.filename):
-                filename = secure_filename(file.filename)
-                unique_filename = f"{uuid.uuid4().hex}_{filename}"
-                file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
-                new_entry['Receipt'] = unique_filename
+                unique_filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
+                # Upload to Supabase Storage instead of local filesystem
+                uploaded_path = tracker.storage.upload_receipt(
+                    file_path=unique_filename,
+                    file_stream_bytes=file.read(),
+                    content_type=file.content_type
+                )
+                if uploaded_path:
+                    new_entry['Receipt'] = uploaded_path
+                else:
+                    flash('Failed to upload receipt to cloud storage.', 'danger')
         
         tracker.storage.add_entry(new_entry)
-        flash('Transaction added successfully!')
+        flash('Transaction added successfully!', 'success')
         return redirect(url_for('ledger'))
 
     return render_template('add.html', today=datetime.now().strftime('%Y-%m-%d'))
@@ -210,36 +243,44 @@ def edit_transaction(entry_id):
     entry = tracker.storage.get_entry(entry_id)
     if not entry: return "Entry not found", 404
 
+    # Get public URL for the receipt for display
+    if entry.get('Receipt'):
+        entry['ReceiptURL'] = tracker.storage.get_receipt_url(entry['Receipt'])
+
     if request.method == 'POST':
         form = request.form
         data_to_update = {
             'Date': form.get('date'),
             'Category': form.get('category'),
             'Transaction': form.get('description'),
-            'Incoming EJ': float(form.get('inc_ej') or 0),
-            'Outgoing EJ': float(form.get('out_ej') or 0),
-            'Incoming (EJ & Neng)': float(form.get('inc_shared') or 0),
-            'Outgoing (EJ & Neng)': float(form.get('out_shared') or 0),
+            'Incoming EJ': safe_float(form.get('inc_ej')),
+            'Outgoing EJ': safe_float(form.get('out_ej')),
+            'Incoming (EJ & Neng)': safe_float(form.get('inc_shared')),
+            'Outgoing (EJ & Neng)': safe_float(form.get('out_shared')),
         }
 
         # --- Handle Receipt File Upload on Edit ---
         if 'receipt' in request.files:
             file = request.files['receipt']
             if file and file.filename != '' and allowed_file(file.filename):
-                # Delete old file if it exists
+                # Delete old file from Supabase if it exists
                 if entry.get('Receipt'):
-                    old_path = os.path.join(app.config['UPLOAD_FOLDER'], entry['Receipt'])
-                    if os.path.exists(old_path):
-                        os.remove(old_path)
+                    tracker.storage.delete_receipt(entry['Receipt'])
                 
-                # Save new file
-                filename = secure_filename(file.filename)
-                unique_filename = f"{uuid.uuid4().hex}_{filename}"
-                file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
-                data_to_update['Receipt'] = unique_filename
+                # Save new file to Supabase
+                unique_filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
+                uploaded_path = tracker.storage.upload_receipt(
+                    file_path=unique_filename,
+                    file_stream_bytes=file.read(),
+                    content_type=file.content_type
+                )
+                if uploaded_path:
+                    data_to_update['Receipt'] = uploaded_path
+                else:
+                    flash('Failed to upload new receipt to cloud storage.', 'danger')
 
         tracker.storage.update_entry(entry_id, data_to_update)
-        flash('Transaction updated successfully!')
+        flash('Transaction updated successfully!', 'success')
         return redirect(url_for('ledger'))
 
     return render_template('edit.html', entry=entry)
@@ -249,13 +290,13 @@ def edit_transaction(entry_id):
 def delete_receipt(entry_id):
     entry = tracker.storage.get_entry(entry_id)
     if entry and entry.get('Receipt'):
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], entry['Receipt'])
-        if os.path.exists(filepath):
-            os.remove(filepath)
-        
-        # Update database to set receipt to null
-        tracker.storage.update_entry(entry_id, {'Receipt': None}, recalculate=False)
-        flash('Receipt deleted successfully.')
+        # Delete from Supabase Storage
+        if tracker.storage.delete_receipt(entry['Receipt']):
+            # Update database to set receipt to null
+            tracker.storage.update_entry(entry_id, {'Receipt': None}, recalculate=False)
+            flash('Receipt deleted successfully.', 'info')
+        else:
+            flash('Failed to delete receipt from cloud storage.', 'danger')
     else:
         flash('No receipt found to delete.', 'warning')
     return redirect(url_for('edit_transaction', entry_id=entry_id))
@@ -265,12 +306,11 @@ def delete_receipt(entry_id):
 def delete_transaction(entry_id):
     entry = tracker.storage.get_entry(entry_id)
     if entry and entry.get('Receipt'):
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], entry['Receipt'])
-        if os.path.exists(filepath):
-            os.remove(filepath)
+        # Delete associated receipt from Supabase Storage
+        tracker.storage.delete_receipt(entry['Receipt'])
 
     tracker.storage.delete_entry(entry_id)
-    flash('Transaction and any associated receipt have been deleted.')
+    flash('Transaction and any associated receipt have been deleted.', 'info')
     return redirect(url_for('ledger'))
 
 @app.route('/export')

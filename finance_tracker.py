@@ -1,11 +1,14 @@
 import pandas as pd
 from tabulate import tabulate
+import logging
 import os
 from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class CSVStorage:
     """Handles data persistence using a CSV file."""
@@ -34,7 +37,7 @@ class CSVStorage:
                     df.rename(columns=rename_map, inplace=True)
                     df.to_csv(self.filename, index=False)
             except Exception as e:
-                print(f"Migration warning: {e}")
+                logger.warning(f"Migration warning: {e}")
 
     def exists(self):
         return os.path.exists(self.filename)
@@ -43,7 +46,7 @@ class CSVStorage:
         df = pd.DataFrame([initial_data])
         df = df[self.columns]
         df.to_csv(self.filename, index=False)
-        print(f"Ledger initialized and saved to '{self.filename}'.")
+        logger.info(f"Ledger initialized and saved to '{self.filename}'.")
 
     def get_last_balances(self):
         try:
@@ -52,7 +55,7 @@ class CSVStorage:
                 last_row = df.iloc[-1]
                 return last_row['EJ Balance'], last_row['EJ & Neng Balance']
         except Exception as e:
-            print(f"Error reading ledger: {e}")
+            logger.error(f"Error reading ledger: {e}")
         return 0.0, 0.0
 
     def add_entry(self, entry_data):
@@ -72,10 +75,11 @@ class SupabaseStorage:
         key = os.environ.get("SUPABASE_KEY")
         if not url or not key:
             # Fallback or error if credentials are missing
-            print("Warning: SUPABASE_URL or SUPABASE_KEY not found in environment.")
+            logger.warning("SUPABASE_URL or SUPABASE_KEY not found in environment.")
         
         self.supabase: Client = create_client(url, key) if url and key else None
         self.table = "finance_ledger"
+        self.storage_bucket = "receipts"
         
         # Map App names (Title Case) to DB names (snake_case)
         self.col_map = {
@@ -92,7 +96,6 @@ class SupabaseStorage:
             'Outgoing (EJ & Neng)': 'outgoing_ej_neng',
             'Total': 'total',
             'Receipt': 'receipt',
-            'Last Edited': 'last_edited_at',
             'Created At': 'created_at'
         }
         # Reverse map for reading back
@@ -111,22 +114,36 @@ class SupabaseStorage:
         # Convert Title Case data to snake_case for DB
         db_data = {self.col_map.get(k, k): v for k, v in initial_data.items()}
         self.supabase.table(self.table).insert(db_data).execute()
-        print("Ledger initialized in Supabase.")
+        logger.info("Ledger initialized in Supabase.")
 
     def get_last_balances(self):
         # Get the most recent entry
-        res = self.supabase.table(self.table).select("*").order("id", desc=True).limit(1).execute()
+        # Order by Date desc, then ID desc to ensure we get the true latest entry
+        res = self.supabase.table(self.table).select("*").order("date", desc=True).order("id", desc=True).limit(1).execute()
         if res.data:
             row = res.data[0]
             return row['ej_balance'], row['ej_neng_balance']
         return 0.0, 0.0
 
+    def check_entry_exists(self, date_str, transaction_desc):
+        """Checks if a transaction exists for a given date and description."""
+        if not self.supabase: return False
+        try:
+            res = self.supabase.table(self.table).select("id", count="exact") \
+                .eq("date", date_str) \
+                .eq("description", transaction_desc) \
+                .limit(1).execute()
+            return res.count > 0
+        except Exception as e:
+            logger.error(f"Check entry exists error: {e}")
+            return False
+
     def add_entry(self, entry_data, recalculate=True):
-        # Set Created At to Philippines Time (UTC+8)
-        ph_tz = timezone(timedelta(hours=8))
-        entry_data['Created At'] = datetime.now(ph_tz).isoformat()
+        # Set Created At to UTC
+        entry_data['Created At'] = datetime.now(timezone.utc).isoformat()
         
         db_data = {self.col_map.get(k, k): v for k, v in entry_data.items()}
+        
         self.supabase.table(self.table).insert(db_data).execute()
         if recalculate:
             self.recalculate_balances()
@@ -139,10 +156,6 @@ class SupabaseStorage:
         return None
 
     def update_entry(self, entry_id, data, recalculate=True):
-        # Record the edit timestamp in Philippines Time (UTC+8)
-        ph_tz = timezone(timedelta(hours=8))
-        data['Last Edited'] = datetime.now(ph_tz).isoformat()
-        
         # Convert to DB keys
         db_data = {self.col_map.get(k, k): v for k, v in data.items() if k in self.col_map}
         self.supabase.table(self.table).update(db_data).eq("id", entry_id).execute()
@@ -172,13 +185,47 @@ class SupabaseStorage:
             # Only update if numbers changed (using small epsilon for float comparison)
             if abs((row.get('ej_balance') or 0) - ej_bal) > 0.01 or \
                abs((row.get('ej_neng_balance') or 0) - shared_bal) > 0.01:
-                row['ej_balance'] = ej_bal
-                row['ej_neng_balance'] = shared_bal
-                row['total'] = total
-                updates.append(row)
+                # Create a specific update payload to only change balance columns
+                update_payload = {
+                    'id': row['id'],
+                    'ej_balance': ej_bal,
+                    'ej_neng_balance': shared_bal,
+                    'total': total
+                }
+                updates.append(update_payload)
         
         if updates:
             self.supabase.table(self.table).upsert(updates).execute()
+
+    def upload_receipt(self, file_path, file_stream_bytes, content_type):
+        """Uploads a file to Supabase Storage."""
+        if not self.supabase: return None
+        try:
+            self.supabase.storage.from_(self.storage_bucket).upload(
+                path=file_path,
+                file=file_stream_bytes,
+                file_options={"content-type": content_type}
+            )
+            # Return the path for storing in the database
+            return file_path
+        except Exception as e:
+            logger.error(f"Supabase upload error: {e}")
+            return None
+
+    def get_receipt_url(self, file_path):
+        """Gets the public URL for a stored file."""
+        if not self.supabase or not file_path: return None
+        try:
+            return self.supabase.storage.from_(self.storage_bucket).get_public_url(file_path)
+        except Exception as e:
+            logger.error(f"Supabase get URL error: {e}")
+            return None
+
+    def delete_receipt(self, file_path):
+        """Deletes a file from Supabase Storage."""
+        if not self.supabase or not file_path: return False
+        self.supabase.storage.from_(self.storage_bucket).remove([file_path])
+        return True
 
     def get_all_transactions(self):
         res = self.supabase.table(self.table).select("*").order("id", desc=False).execute()
@@ -195,7 +242,7 @@ class SupabaseStorage:
             res = self.supabase.table("chat_messages").select("*").order("created_at", desc=False).limit(50).execute()
             return res.data if res.data else []
         except Exception as e:
-            print(f"Chat error: {e}")
+            logger.error(f"Chat error: {e}")
             return []
 
     def add_chat_message(self, nickname, message):
@@ -208,7 +255,7 @@ class SupabaseStorage:
                 "created_at": datetime.now(ph_tz).isoformat()
             }).execute()
         except Exception as e:
-            print(f"Chat add error: {e}")
+            logger.error(f"Chat add error: {e}")
 
 class FinanceTracker:
     def __init__(self):
@@ -222,16 +269,9 @@ class FinanceTracker:
         today_str = datetime.now(ph_tz).strftime('%Y-%m-%d')
 
         # Check if interest was already added today
-        all_transactions = self.storage.get_all_transactions()
-        if not all_transactions.empty:
-            # Ensure 'Date' and 'Transaction' columns exist before filtering
-            if 'Date' in all_transactions.columns and 'Transaction' in all_transactions.columns:
-                interest_today = all_transactions[
-                    (all_transactions['Date'] == today_str) &
-                    (all_transactions['Transaction'] == 'Maribank Interest')
-                ]
-                if not interest_today.empty:
-                    return  # Interest already logged for today
+        # Optimized: Query DB directly instead of fetching all transactions
+        if self.storage.check_entry_exists(today_str, 'Maribank Interest'):
+            return  # Interest already logged for today
 
         # Get last balances to calculate interest on the total
         ej_bal, shared_bal = self.storage.get_last_balances()
@@ -264,24 +304,21 @@ class FinanceTracker:
                     'Incoming (EJ & Neng)': net_interest,
                 }
                 self.storage.add_entry(new_entry)
-                print(f"Logged Maribank interest for {today_str}: ₱{net_interest}")
+                logger.info(f"Logged Maribank interest for {today_str}: ₱{net_interest}")
 
     def check_file(self):
         """Checks if the CSV exists; if not, initializes it with starting balances."""
         if not self.storage.exists():
-            print("Storage not initialized. Starting setup...")
+            logger.info("Storage not initialized. Starting setup...")
             self.initialize_ledger()
 
     def initialize_ledger(self):
         """Sets initial balances and creates the CSV file."""
         print("\n--- Initial Setup ---")
-        try:
-            ej_start = float(input("Enter starting balance for EJ Personal: "))
-            shared_start = float(input("Enter starting balance for EJ & Neng: "))
-        except ValueError:
-            print("Invalid input. Defaulting balances to 0.0.")
-            ej_start = 0.0
-            shared_start = 0.0
+        # Modified for serverless/non-interactive environments
+        ej_start = 0.0
+        shared_start = 0.0
+        logger.info("Initializing ledger with default 0.0 balances (non-interactive mode).")
         
         total = ej_start + shared_start
         
