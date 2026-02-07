@@ -111,12 +111,16 @@ class SupabaseStorage:
             return False
 
     def initialize(self, initial_data):
+        if not self.supabase:
+            logger.warning("Supabase client not initialized. Skipping DB initialization.")
+            return
         # Convert Title Case data to snake_case for DB
         db_data = {self.col_map.get(k, k): v for k, v in initial_data.items()}
         self.supabase.table(self.table).insert(db_data).execute()
         logger.info("Ledger initialized in Supabase.")
 
     def get_last_balances(self):
+        if not self.supabase: return 0.0, 0.0
         # Get the most recent entry
         # Order by Date desc, then ID desc to ensure we get the true latest entry
         res = self.supabase.table(self.table).select("*").order("date", desc=True).order("id", desc=True).limit(1).execute()
@@ -139,8 +143,10 @@ class SupabaseStorage:
             return False
 
     def add_entry(self, entry_data, recalculate=True):
-        # Set Created At to UTC
-        entry_data['Created At'] = datetime.now(timezone.utc).isoformat()
+        if not self.supabase: return
+        # Set Created At to PH Time (UTC+8)
+        ph_tz = timezone(timedelta(hours=8))
+        entry_data['Created At'] = datetime.now(ph_tz).isoformat()
         
         db_data = {self.col_map.get(k, k): v for k, v in entry_data.items()}
         
@@ -149,6 +155,7 @@ class SupabaseStorage:
             self.recalculate_balances()
 
     def get_entry(self, entry_id):
+        if not self.supabase: return None
         res = self.supabase.table(self.table).select("*").eq("id", entry_id).execute()
         if res.data:
             # Convert back to App keys
@@ -156,6 +163,7 @@ class SupabaseStorage:
         return None
 
     def update_entry(self, entry_id, data, recalculate=True):
+        if not self.supabase: return
         # Convert to DB keys
         db_data = {self.col_map.get(k, k): v for k, v in data.items() if k in self.col_map}
         self.supabase.table(self.table).update(db_data).eq("id", entry_id).execute()
@@ -163,10 +171,12 @@ class SupabaseStorage:
             self.recalculate_balances()
 
     def delete_entry(self, entry_id):
+        if not self.supabase: return
         self.supabase.table(self.table).delete().eq("id", entry_id).execute()
         self.recalculate_balances()
 
     def recalculate_balances(self):
+        if not self.supabase: return
         """Recalculates running balances for all transactions to ensure consistency."""
         # Fetch all rows ordered by date and ID
         res = self.supabase.table(self.table).select("*").order("date", desc=False).order("id", desc=False).execute()
@@ -228,6 +238,7 @@ class SupabaseStorage:
         return True
 
     def get_all_transactions(self):
+        if not self.supabase: return pd.DataFrame(columns=self.col_map.keys())
         res = self.supabase.table(self.table).select("*").order("id", desc=False).execute()
         if res.data:
             # Convert DB snake_case back to App Title Case
@@ -266,7 +277,8 @@ class FinanceTracker:
     def check_maribank_interest(self):
         """Checks and adds daily interest from MariBank if not already logged."""
         ph_tz = timezone(timedelta(hours=8))
-        today_str = datetime.now(ph_tz).strftime('%Y-%m-%d')
+        now_ph = datetime.now(ph_tz)
+        today_str = now_ph.strftime('%Y-%m-%d')
 
         # Check if interest was already added today
         # Optimized: Query DB directly instead of fetching all transactions
@@ -298,7 +310,7 @@ class FinanceTracker:
             if net_interest >= 0.01:
                 new_entry = {
                     'Date': today_str,
-                    'Time': datetime.now(ph_tz).strftime('%I:%M:%S %p'),
+                    'Time': now_ph.strftime('%I:%M:%S %p'),
                     'Category': 'Interest',
                     'Transaction': 'Maribank Interest',
                     'Incoming (EJ & Neng)': net_interest,

@@ -41,6 +41,13 @@ def run_daily_interest_check():
 # --- Cron Route (Replaces Scheduler for Vercel) ---
 @app.route('/api/cron/daily-interest')
 def cron_daily_interest():
+    # Secure the cron endpoint if CRON_SECRET is set
+    cron_secret = os.environ.get('CRON_SECRET')
+    auth_header = request.headers.get('Authorization')
+    
+    if cron_secret and (not auth_header or auth_header != f"Bearer {cron_secret}"):
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+
     run_daily_interest_check()
     return jsonify({'status': 'success', 'message': 'Daily interest check executed'})
 
@@ -202,10 +209,11 @@ def ledger():
 @login_required
 def add_transaction():
     if request.method == 'POST':
+        ph_tz = timezone(timedelta(hours=8))
         form = request.form
         new_entry = {
             'Date': form.get('date'),
-            'Time': datetime.now().strftime('%I:%M:%S %p'),
+            'Time': datetime.now(ph_tz).strftime('%I:%M:%S %p'),
             'Category': form.get('category'),
             'Transaction': form.get('description'),
             'Incoming EJ': safe_float(form.get('inc_ej')),
@@ -235,7 +243,8 @@ def add_transaction():
         flash('Transaction added successfully!', 'success')
         return redirect(url_for('ledger'))
 
-    return render_template('add.html', today=datetime.now().strftime('%Y-%m-%d'))
+    ph_tz = timezone(timedelta(hours=8))
+    return render_template('add.html', today=datetime.now(ph_tz).strftime('%Y-%m-%d'))
 
 @app.route('/edit/<int:entry_id>', methods=['GET', 'POST'])
 @login_required
